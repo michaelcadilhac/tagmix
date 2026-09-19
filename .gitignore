@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# Runtime catalog and transformed media
+.data/
+
+# Test output
+coverage/
+
+# Local configuration
+.env
+.env.local
+.env.*.local
+
+# Tooling and OS files
+*.tsbuildinfo
+*.log
+.DS_Store
