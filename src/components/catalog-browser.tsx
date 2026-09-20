@@ -28,9 +28,6 @@ function TagCard({ tag, index }: { tag: TagSummary; index: number }) {
 
   return (
     <Link className="tag-card" href={`/tags/${tag.id}`} style={{ "--card-order": index } as React.CSSProperties}>
-      <div className="tag-card-topline">
-        <span className="tag-id">#{tag.id}</span>
-      </div>
       <div className="tag-card-copy">
         <h3>{tag.title}</h3>
         {detail && <p className="tag-card-detail">{detail}</p>}
@@ -62,7 +59,6 @@ function CatalogSkeleton() {
     <div className="tag-grid" aria-hidden="true">
       {Array.from({ length: 9 }, (_, index) => (
         <div className="tag-card tag-card-skeleton" key={index}>
-          <span className="skeleton skeleton-short" />
           <span className="skeleton skeleton-title" />
           <span className="skeleton skeleton-line" />
           <span className="skeleton skeleton-meta" />

@@ -487,7 +487,7 @@ main {
   --card-order: 0;
   position: relative;
   display: flex;
-  min-height: 270px;
+  min-height: 230px;
   padding: 22px;
   overflow: hidden;
   flex-direction: column;
@@ -521,30 +521,16 @@ main {
   height: 100%;
 }
 
-.tag-card-topline,
 .tag-card-footer {
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-
-.tag-card-topline {
-  justify-content: flex-end;
-}
-
-.tag-card-footer {
   justify-content: space-between;
-}
-
-.tag-id {
-  color: #9aa5a1;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.69rem;
+  gap: 10px;
 }
 
 .tag-card-copy {
   flex: 1;
-  padding: 25px 0 18px;
+  padding: 0 0 18px;
 }
 
 .tag-card h3 {
@@ -686,7 +672,7 @@ main {
 }
 
 .skeleton-short { width: 30%; }
-.skeleton-title { width: 82%; height: 25px; margin-top: 42px; }
+.skeleton-title { width: 82%; height: 25px; }
 .skeleton-line { width: 58%; margin-top: 12px; }
 .skeleton-meta { width: 100%; height: 48px; margin-top: auto; }
 .skeleton-heading { width: min(550px, 72%); height: 52px; margin: 20px 0; }
@@ -2261,12 +2247,8 @@ main {
   }
 
   .tag-card {
-    min-height: 240px;
+    min-height: 200px;
     padding: 20px;
-  }
-
-  .tag-card-copy {
-    padding-top: 20px;
   }
 
   .pagination {
