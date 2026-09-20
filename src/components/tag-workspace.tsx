@@ -84,16 +84,18 @@ export function TagWorkspace({ tagId, initialPitch }: { tagId: string; initialPi
     <ReferenceToneProvider key={tag.id}><article className="workspace-page">
       <header className="workspace-hero">
         <div className="workspace-heading">
-          <h1>{tag.title}</h1>
-          {subtitle && <p className="workspace-subtitle">{subtitle}</p>}
+          <TagAccountActions key={tag.id} tagId={tag.id} pitchSemitones={pitchSemitones}>
+            <div className="workspace-title-copy">
+              <h1>{tag.title}</h1>
+              {subtitle && <p className="workspace-subtitle">{subtitle}</p>}
+            </div>
+          </TagAccountActions>
         </div>
         <dl className="workspace-facts">
           <div><dt>Key</dt><dd className="workspace-key"><span>{tag.key || "—"}</span><KeyPitchPipe musicalKey={tag.key} pitchSemitones={pitchSemitones} /></dd></div>
           <div><dt>Style</dt><dd>{tag.style}</dd></div>
         </dl>
       </header>
-
-      <TagAccountActions key={tag.id} tagId={tag.id} pitchSemitones={pitchSemitones} />
 
       <div className="workspace-grid">
         <ScoreViewer

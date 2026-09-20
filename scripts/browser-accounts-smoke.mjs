@@ -200,18 +200,20 @@ async function checkKeyPitch(midi) {
   assert(frequencies.length === 3 && frequencies.every((frequency, index) => Math.abs(frequency - fundamental * (index + 1)) < 0.001), `Key pitch pipe sounds the wrong note: ${JSON.stringify(frequencies)} for MIDI ${midi}`);
   assert(await devtools.evaluate('document.querySelector(".workspace-key .key-pitch-pipe")?.getAttribute("aria-label").includes("pitch pipe")'), "Key pitch pipe is missing its accessible label or placement beside the key");
 }
-async function checkSaveDialog(label) {
+async function checkSaveDropdown(label) {
   const state = await devtools.evaluate(`(() => {
-    const dialog = document.querySelector(".save-tag-dialog");
-    const bounds = dialog.getBoundingClientRect();
-    return { modal: dialog.matches(":modal"), focused: dialog.contains(document.activeElement),
-      locked: getComputedStyle(document.documentElement).overflow === "hidden",
+    const dropdown = document.querySelector(".save-tag-dropdown");
+    const bounds = dropdown.getBoundingClientRect();
+    const trigger = document.querySelector(".tag-save-button").getBoundingClientRect();
+    const title = document.querySelector(".workspace-title-copy").getBoundingClientRect();
+    return { focused: dropdown.contains(document.activeElement),
+      modal: !!document.querySelector("dialog:modal"), locked: getComputedStyle(document.documentElement).overflow === "hidden",
+      anchored: Math.abs(bounds.left - trigger.left) < 1 && bounds.top >= trigger.bottom,
+      beforeTitle: trigger.right <= title.left,
       fits: bounds.left >= 0 && bounds.right <= document.documentElement.clientWidth && bounds.top >= 0 && bounds.bottom <= innerHeight,
-      overflows: dialog.scrollWidth > dialog.clientWidth };
+      overflows: dropdown.scrollWidth > dropdown.clientWidth };
   })()`);
-  assert(state.modal && state.focused && state.locked && state.fits && !state.overflows, `${label} dialog failed: ${JSON.stringify(state)}`);
-  await devtools.evaluate('document.querySelector(".key-pitch-pipe").focus()');
-  assert(await devtools.evaluate('document.querySelector(".save-tag-dialog").contains(document.activeElement)'), "Focus escaped into the page behind the modal");
+  assert(!state.modal && !state.locked && state.focused && state.anchored && state.beforeTitle && state.fits && !state.overflows, `${label} dropdown failed: ${JSON.stringify(state)}`);
 }
 async function layout(label) {
   const result = await devtools.evaluate('({ viewport: document.documentElement.clientWidth, width: document.documentElement.scrollWidth })');
@@ -342,24 +344,25 @@ try {
   await click('[aria-label="Raise pitch one semitone"]');
   await devtools.waitFor('document.querySelector(".pitch-stepper output")?.textContent === "+2 semitones"');
   await checkKeyPitch(62);
-  await click('.tag-account-actions button[aria-expanded]');
-  await devtools.waitFor('document.querySelector(".save-tag-form select")?.options.length === 3 && !document.querySelector(".save-tag-form select").disabled');
-  await checkSaveDialog("Mobile save");
-  await screenshot("mobile-save-dialog");
+  await devtools.evaluate('document.querySelector(".tag-save-button").focus()');
+  await devtools.send("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40 });
+  await devtools.waitFor('document.querySelectorAll(".save-tag-dropdown [role=menuitem]").length === 2 && !document.querySelector(".new-folder-option").disabled');
+  await checkSaveDropdown("Mobile save");
+  await screenshot("mobile-save-dropdown");
   await devtools.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
   await devtools.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
-  await devtools.waitFor('!document.querySelector(".save-tag-dialog")');
-  assert(await devtools.evaluate('document.activeElement?.getAttribute("aria-haspopup") === "dialog" && document.documentElement.style.overflow !== "hidden"'), "Escape did not restore focus and scrolling");
+  await devtools.waitFor('!document.querySelector(".save-tag-dropdown")');
+  assert(await devtools.evaluate('document.activeElement?.getAttribute("aria-haspopup") === "menu" && document.documentElement.style.overflow !== "hidden"'), "Escape did not restore focus and scrolling");
   await click('.tag-account-actions button[aria-expanded]');
-  await devtools.waitFor('document.querySelector(".save-tag-dialog")?.matches(":modal")');
+  await devtools.waitFor('!!document.querySelector(".save-tag-dropdown [role=menu]")');
   await devtools.send("Input.dispatchMouseEvent", { type: "mousePressed", x: 2, y: 2, button: "left", clickCount: 1 });
   await devtools.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: 2, y: 2, button: "left", clickCount: 1 });
-  await devtools.waitFor('!document.querySelector(".save-tag-dialog")');
+  await devtools.waitFor('!document.querySelector(".save-tag-dropdown")');
   await click('.tag-account-actions button[aria-expanded]');
-  await devtools.waitFor('!!document.querySelector(".save-tag-form select") && !document.querySelector(".save-tag-form select").disabled');
-  await fill('.save-tag-form select', folderId);
-  await devtools.evaluate('document.querySelector(".save-tag-form").requestSubmit()', true);
+  await devtools.waitFor('!!document.querySelector(".new-folder-option") && !document.querySelector(".new-folder-option").disabled');
+  await click(`.save-folder-option[data-folder-id="${folderId}"]`);
   await devtools.waitFor('document.querySelector(".tag-account-actions")?.textContent.includes("Saved to")');
+  assert(await devtools.evaluate('!document.querySelector(".save-tag-dropdown") && document.activeElement?.classList.contains("tag-save-button")'), "Saving did not close the dropdown and restore focus");
   assert((await api(`account/folders/${folderId}`, "GET", undefined, owner.id)).data.folder.tags[0].pitchSemitones === 2, "Save did not capture the current mixer pitch");
   await click(".mark-button");
   await devtools.waitFor('document.querySelectorAll(".mark-chip").length === 2');
@@ -371,29 +374,33 @@ try {
   await devtools.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
   await layout("Rehearsal desktop");
   await screenshot("desktop-tag");
-  const beforeModal = await devtools.evaluate('document.querySelector(".workspace-grid").getBoundingClientRect().top');
+  const beforeDropdown = await devtools.evaluate('document.querySelector(".workspace-grid").getBoundingClientRect().top');
   await click('.tag-account-actions button[aria-expanded]');
-  await devtools.waitFor('!!document.querySelector(".save-tag-form select") && !document.querySelector(".save-tag-form select").disabled');
-  await checkSaveDialog("Desktop save");
-  assert(await devtools.evaluate('document.querySelector(".workspace-grid").getBoundingClientRect().top') === beforeModal, "Save dialog shifts the page layout");
-  await screenshot("desktop-save-dialog");
-  await click('.save-tag-dialog .dialog-close');
-  await devtools.waitFor('!document.querySelector(".save-tag-dialog")');
+  await devtools.waitFor('!!document.querySelector(".new-folder-option") && !document.querySelector(".new-folder-option").disabled');
+  await checkSaveDropdown("Desktop save");
+  assert(await devtools.evaluate('document.querySelector(".workspace-grid").getBoundingClientRect().top') === beforeDropdown, "Save dropdown shifts the page layout");
+  await screenshot("desktop-save-dropdown");
+  await devtools.send("Input.dispatchKeyEvent", { type: "keyDown", key: "End", code: "End" });
+  assert(await devtools.evaluate('document.activeElement?.classList.contains("new-folder-option")'), "Dropdown keyboard navigation failed");
+  await click('.tag-save-button');
+  await devtools.waitFor('!document.querySelector(".save-tag-dropdown")');
   await click('.tag-account-actions button[aria-expanded]');
-  await devtools.waitFor('document.querySelector(".save-tag-dialog")?.matches(":modal")');
-  await click('.save-tag-buttons button[type="button"]');
-  await devtools.waitFor('!document.querySelector(".save-tag-dialog")');
-  checks.push("Save-to-folder modal overlays the page at 360/1440px, contains focus, locks scrolling, and dismisses with Escape, backdrop, close, or Cancel");
+  await devtools.waitFor('!!document.querySelector(".save-tag-dropdown [role=menu]")');
+  await devtools.evaluate('document.querySelector(".key-pitch-pipe").focus()');
+  await devtools.waitFor('!document.querySelector(".save-tag-dropdown")');
+  checks.push("Bookmark appears left of the title; its anchored dropdown fits 360/1440px, supports keyboard navigation, and closes on Escape, outside clicks, focus leaving, or a second click");
   await devtools.send("Emulation.setDeviceMetricsOverride", { width: 360, height: 800, deviceScaleFactor: 1, mobile: true });
   await click('.tag-account-actions button[aria-expanded]');
-  await devtools.waitFor('!!document.querySelector(".save-tag-form select") && !document.querySelector(".save-tag-form select").disabled');
-  assert(await devtools.evaluate(`document.querySelector('.save-tag-form option[value="${folderId}"]').disabled`), "Already-saved folder is not identified");
-  await fill('.save-tag-form select', "new");
+  await devtools.waitFor('!!document.querySelector(".new-folder-option") && !document.querySelector(".new-folder-option").disabled');
+  assert(await devtools.evaluate(`document.querySelector('.save-folder-option[data-folder-id="${folderId}"]').disabled`), "Already-saved folder is not identified");
+  await click('.new-folder-option');
   await devtools.waitFor(`document.activeElement === document.querySelector('.save-tag-form input[name="name"]')`);
   await fill('.save-tag-form input[name="name"]', "   ");
   await devtools.evaluate('document.querySelector(".save-tag-form").requestSubmit()', true);
-  await devtools.waitFor('document.querySelector(".save-tag-dialog [role=alert]")?.textContent === "Enter a folder name." && !document.querySelector(".save-tag-form select").disabled');
+  await devtools.waitFor('document.querySelector(".save-tag-dropdown [role=alert]")?.textContent === "Enter a folder name." && !document.querySelector(".new-folder-option").disabled');
   await fill('.save-tag-form input[name="name"]', "Weekend rehearsal");
+  await checkSaveDropdown("New folder");
+  await screenshot("mobile-new-folder-dropdown");
   await devtools.evaluate('document.querySelector(".save-tag-form").requestSubmit()', true);
   await devtools.waitFor('document.querySelectorAll(".folder-membership a").length === 2');
   const additionalFolder = (await api("account/folders", "GET", undefined, owner.id)).data.folders.find(folder => folder.name === "Weekend rehearsal");
@@ -572,8 +579,8 @@ try {
   await navigate("/tags/37");
   await devtools.waitFor(`!!document.querySelector('.folder-membership a[href="/folders/${folderId}"]')`);
   await click('.tag-account-actions button[aria-expanded]');
-  await devtools.waitFor(`!!document.querySelector('.save-tag-form option[value="${folderId}"]')`);
-  assert(await devtools.evaluate(`document.querySelector('.save-tag-form option[value="${folderId}"]').disabled && document.querySelector('.save-tag-form option[value="${folderId}"]').textContent.includes("read-only")`), "Read-only folder can be chosen for saving");
+  await devtools.waitFor(`!!document.querySelector('.save-folder-option[data-folder-id="${folderId}"]')`);
+  assert(await devtools.evaluate(`document.querySelector('.save-folder-option[data-folder-id="${folderId}"]').disabled && document.querySelector('.save-folder-option[data-folder-id="${folderId}"]').textContent.includes("Read-only")`), "Read-only folder can be chosen for saving");
   checks.push("Read-only originals appear in My folders and tag memberships without editing controls");
 
   assert((await api("account/login", "POST", { email: owner.email, password: "a long smoke test password" })).status === 200, "Owner sign-in failed");
