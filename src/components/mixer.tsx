@@ -1,17 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { Icon } from "@/components/icons";
+import { PitchControl } from "@/components/pitch-control";
+import { useAccount } from "@/components/account-provider";
+import { useAccountResource } from "@/components/account-resource";
+import { accountRequest, errorMessage } from "@/lib/account-client";
+import type { CueMark } from "@/lib/account-types";
 import { formatTime } from "@/lib/format";
 import { configureMixBus, configureVoiceGainForMonoInput } from "@/lib/mix-bus";
 import {
   CLIENT_PITCH_LATENCY_SAMPLES,
-  MAX_PITCH_SEMITONES,
-  MIN_PITCH_SEMITONES,
-  formatPitchSemitones,
   normalizePitchSemitones,
   semitonesToRatio,
-  type PitchMode,
 } from "@/lib/pitch";
 import {
   createScriptProcessorPitchNode,
@@ -29,18 +31,17 @@ import {
 type VoiceMix = { volume: number; pan: number; muted: boolean };
 type MixState = Record<Voice, VoiceMix>;
 type TrackState = "loading" | "ready" | "error";
-type CueMark = { id: string; time: number; label: string };
 type AudioMap = Partial<Record<Voice, HTMLAudioElement>>;
 type MixerGraph = {
   context: AudioContext;
-  dryPitchGains?: Record<Voice, GainNode>;
+  dryPitchGains: Record<Voice, GainNode>;
   gains: Record<Voice, GainNode>;
   limiter: DynamicsCompressorNode;
   master: GainNode;
   output: GainNode;
   panners: Record<Voice, StereoPannerNode>;
-  pitchProcessors?: Record<Voice, ControllablePitchNode>;
-  wetPitchGains?: Record<Voice, GainNode>;
+  pitchProcessors: Record<Voice, ControllablePitchNode>;
+  wetPitchGains: Record<Voice, GainNode>;
 };
 type ClientPitchBackend = "worklet" | "fallback";
 
@@ -63,17 +64,15 @@ function clamp(value: unknown, minimum: number, maximum: number, fallback: numbe
 
 function loadStoredMix(tagId: number): {
   mix: MixState;
-  pitchMode: PitchMode;
   pitchSemitones: number;
   speed: number;
 } {
-  const fallback = { mix: defaultMix(), pitchMode: "client" as const, pitchSemitones: 0, speed: 1 };
+  const fallback = { mix: defaultMix(), pitchSemitones: 0, speed: 1 };
   try {
     const raw = window.localStorage.getItem(`tagmix:mix:${tagId}`);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as {
       mix?: Partial<Record<Voice, Partial<VoiceMix>>>;
-      pitchMode?: PitchMode;
       pitchSemitones?: number;
       speed?: number;
     };
@@ -88,28 +87,10 @@ function loadStoredMix(tagId: number): {
       };
     }
     const speed = SPEEDS.includes(parsed.speed as (typeof SPEEDS)[number]) ? Number(parsed.speed) : 1;
-    const pitchMode = parsed.pitchMode === "server" ? "server" : "client";
     const pitchSemitones = normalizePitchSemitones(parsed.pitchSemitones);
-    return { mix, pitchMode, pitchSemitones, speed };
+    return { mix, pitchSemitones, speed };
   } catch {
     return fallback;
-  }
-}
-
-function loadStoredMarks(tagId: number): CueMark[] {
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(`tagmix:marks:${tagId}`) ?? "[]") as CueMark[];
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((mark) => mark && typeof mark.id === "string" && Number.isFinite(mark.time))
-      .map((mark, index) => ({
-        id: mark.id,
-        time: Math.max(0, Number(mark.time)),
-        label: typeof mark.label === "string" ? mark.label : `Mark ${index + 1}`,
-      }))
-      .sort((left, right) => left.time - right.time);
-  } catch {
-    return [];
   }
 }
 
@@ -125,12 +106,15 @@ function statusCopy(statuses: Record<Voice, TrackState>): string {
   return ready === VOICES.length ? "All four parts ready" : `Preparing parts · ${ready} of ${VOICES.length}`;
 }
 
-export function Mixer({ tag }: { tag: Tag }) {
+export function Mixer({ tag, pitchSemitones, onPitchChange, initialPitch }: {
+  tag: Tag;
+  pitchSemitones: number;
+  onPitchChange: (pitch: number) => void;
+  initialPitch?: number;
+}) {
   const [mix, setMix] = useState<MixState>(defaultMix);
   const [solo, setSolo] = useState<Set<Voice>>(new Set());
   const [speed, setSpeed] = useState(1);
-  const [pitchMode, setPitchMode] = useState<PitchMode>("client");
-  const [pitchSemitones, setPitchSemitones] = useState(0);
   const [clientPitchBackend, setClientPitchBackend] = useState<ClientPitchBackend | null>(null);
   const [statuses, setStatuses] = useState<Record<Voice, TrackState>>(loadingStates);
   const [duration, setDuration] = useState(0);
@@ -138,18 +122,21 @@ export function Mixer({ tag }: { tag: Tag }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [playbackError, setPlaybackError] = useState("");
-  const [marks, setMarks] = useState<CueMark[]>([]);
+  const { user, loading: accountLoading } = useAccount();
+  const marksResource = useAccountResource<{ marks: CueMark[] }>(`marks/${tag.id}`, user?.id);
+  const marks = marksResource.data?.marks ?? [];
+  const [marksSaving, setMarksSaving] = useState(false);
+  const [marksError, setMarksError] = useState("");
+  const marksBusy = useRef(false);
   const [storageReady, setStorageReady] = useState(false);
   const audiosRef = useRef<AudioMap>({});
   const graphRef = useRef<MixerGraph | null>(null);
   const mixRef = useRef(mix);
   const soloRef = useRef(solo);
-  const pitchModeRef = useRef(pitchMode);
   const pitchSemitonesRef = useRef(pitchSemitones);
 
   const allReady = VOICES.every((voice) => statuses[voice] === "ready");
   const hasError = VOICES.some((voice) => statuses[voice] === "error");
-  const serverPitchSemitones = pitchMode === "server" ? pitchSemitones : 0;
 
   const applyGraphMix = useCallback(() => {
     const graph = graphRef.current;
@@ -166,8 +153,8 @@ export function Mixer({ tag }: { tag: Tag }) {
 
   const applyGraphPitch = useCallback(() => {
     const graph = graphRef.current;
-    if (!graph?.pitchProcessors || !graph.dryPitchGains || !graph.wetPitchGains) return;
-    const useClientPitch = pitchModeRef.current === "client" && pitchSemitonesRef.current !== 0;
+    if (!graph) return;
+    const useClientPitch = pitchSemitonesRef.current !== 0;
     const ratio = useClientPitch ? semitonesToRatio(pitchSemitonesRef.current) : 1;
     const now = graph.context.currentTime;
     for (const voice of VOICES) {
@@ -184,10 +171,9 @@ export function Mixer({ tag }: { tag: Tag }) {
   }, [applyGraphMix, mix, solo]);
 
   useEffect(() => {
-    pitchModeRef.current = pitchMode;
     pitchSemitonesRef.current = pitchSemitones;
     applyGraphPitch();
-  }, [applyGraphPitch, pitchMode, pitchSemitones]);
+  }, [applyGraphPitch, pitchSemitones]);
 
   useEffect(() => {
     const stored = loadStoredMix(tag.id);
@@ -195,30 +181,22 @@ export function Mixer({ tag }: { tag: Tag }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMix(stored.mix);
     setSpeed(stored.speed);
-    setPitchMode(stored.pitchMode);
-    setPitchSemitones(stored.pitchSemitones);
-    setMarks(loadStoredMarks(tag.id));
+    onPitchChange(initialPitch ?? stored.pitchSemitones);
     setStorageReady(true);
-  }, [tag.id]);
+  }, [initialPitch, onPitchChange, tag.id]);
 
   useEffect(() => {
     if (!storageReady) return;
     window.localStorage.setItem(
       `tagmix:mix:${tag.id}`,
-      JSON.stringify({ mix, pitchMode, pitchSemitones, speed }),
+      JSON.stringify({ mix, pitchSemitones, speed }),
     );
-  }, [mix, pitchMode, pitchSemitones, speed, storageReady, tag.id]);
-
-  useEffect(() => {
-    if (!storageReady) return;
-    window.localStorage.setItem(`tagmix:marks:${tag.id}`, JSON.stringify(marks));
-  }, [marks, storageReady, tag.id]);
+  }, [mix, pitchSemitones, speed, storageReady, tag.id]);
 
   useEffect(() => {
     const audios: AudioMap = {};
     const cleanup: Array<() => void> = [];
-    // Switching processing methods, or changing a server-side pitch, replaces
-    // all four media resources so each graph owns a fresh MediaElementSource.
+    // Each tag owns four media elements and one shared audio graph.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setStatuses(loadingStates());
     setDuration(0);
@@ -226,7 +204,6 @@ export function Mixer({ tag }: { tag: Tag }) {
     setIsPlaying(false);
     setClientPitchBackend(null);
     setPlaybackError("");
-    const pitchQuery = serverPitchSemitones === 0 ? "" : `?pitch=${serverPitchSemitones}`;
 
     const refreshDuration = () => {
       const values = VOICES.map((voice) => audios[voice]?.duration ?? Number.NaN);
@@ -236,7 +213,7 @@ export function Mixer({ tag }: { tag: Tag }) {
     };
 
     for (const voice of VOICES) {
-      const audio = new Audio(`/api/tags/${tag.id}/audio/${voice}${pitchQuery}`);
+      const audio = new Audio(`/api/tags/${tag.id}/audio/${voice}`);
       audio.preload = "auto";
       audio.playbackRate = speed;
       audio.preservesPitch = true;
@@ -281,7 +258,7 @@ export function Mixer({ tag }: { tag: Tag }) {
     };
     // Speed is applied by the dedicated effect without recreating media elements.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pitchMode, serverPitchSemitones, tag.id]);
+  }, [tag.id]);
 
   useEffect(() => {
     for (const voice of VOICES) {
@@ -317,10 +294,8 @@ export function Mixer({ tag }: { tag: Tag }) {
     if (graphRef.current) return graphRef.current;
     const AudioContextConstructor = window.AudioContext;
     const context = new AudioContextConstructor();
-    const useClientProcessing = pitchModeRef.current === "client";
     const worklet = (context as AudioContext & { audioWorklet?: AudioWorklet }).audioWorklet;
-    let useAudioWorklet = useClientProcessing
-      && typeof AudioWorkletNode !== "undefined"
+    let useAudioWorklet = typeof AudioWorkletNode !== "undefined"
       && typeof worklet?.addModule === "function";
     if (useAudioWorklet && worklet) {
       try {
@@ -329,23 +304,22 @@ export function Mixer({ tag }: { tag: Tag }) {
         useAudioWorklet = false;
       }
     }
-    if (useClientProcessing
-      && !useAudioWorklet
+    if (!useAudioWorklet
       && typeof context.createScriptProcessor !== "function") {
       await context.close();
-      throw new Error("Client-side pitch processing is unavailable here. Select Server side instead.");
+      throw new Error("Pitch playback is not supported by this browser.");
     }
-    const dryPitchGains = useClientProcessing ? {} as Record<Voice, GainNode> : undefined;
+    const dryPitchGains = {} as Record<Voice, GainNode>;
     const gains = {} as Record<Voice, GainNode>;
     const panners = {} as Record<Voice, StereoPannerNode>;
-    const pitchProcessors = useClientProcessing ? {} as Record<Voice, ControllablePitchNode> : undefined;
-    const wetPitchGains = useClientProcessing ? {} as Record<Voice, GainNode> : undefined;
+    const pitchProcessors = {} as Record<Voice, ControllablePitchNode>;
+    const wetPitchGains = {} as Record<Voice, GainNode>;
     const master = context.createGain();
     const limiter = context.createDynamicsCompressor();
     const output = context.createGain();
     configureMixBus(master, limiter, output);
     master.connect(limiter).connect(output).connect(context.destination);
-    const useClientPitch = useClientProcessing && pitchSemitonesRef.current !== 0;
+    const useClientPitch = pitchSemitonesRef.current !== 0;
     const initialPitchRatio = useClientPitch ? semitonesToRatio(pitchSemitonesRef.current) : 1;
 
     for (const voice of VOICES) {
@@ -356,40 +330,36 @@ export function Mixer({ tag }: { tag: Tag }) {
       const panner = context.createStereoPanner();
       configureVoiceGainForMonoInput(gain);
       source.connect(gain);
-      if (useClientProcessing && dryPitchGains && pitchProcessors && wetPitchGains) {
-        const dryDelay = context.createDelay(1);
-        const dryPitchGain = context.createGain();
-        const pitchProcessor: ControllablePitchNode = useAudioWorklet
-          ? (() => {
-              const node = new AudioWorkletNode(context, "tagmix-pitch-shifter", {
-                channelCount: 1,
-                channelCountMode: "explicit",
-                numberOfInputs: 1,
-                numberOfOutputs: 1,
-                outputChannelCount: [1],
-                parameterData: { pitchRatio: initialPitchRatio },
-                processorOptions: { latencySamples: CLIENT_PITCH_LATENCY_SAMPLES },
-              });
-              return {
-                node,
-                setPitchRatio: (ratio, atTime = context.currentTime) => {
-                  node.parameters.get("pitchRatio")?.setTargetAtTime(ratio, atTime, 0.02);
-                },
-              };
-            })()
-          : createScriptProcessorPitchNode(context, initialPitchRatio, CLIENT_PITCH_LATENCY_SAMPLES);
-        const wetPitchGain = context.createGain();
-        dryDelay.delayTime.value = CLIENT_PITCH_LATENCY_SAMPLES / context.sampleRate;
-        dryPitchGain.gain.value = useClientPitch ? 0 : 1;
-        wetPitchGain.gain.value = useClientPitch ? 1 : 0;
-        gain.connect(dryDelay).connect(dryPitchGain).connect(panner);
-        gain.connect(pitchProcessor.node).connect(wetPitchGain).connect(panner);
-        dryPitchGains[voice] = dryPitchGain;
-        pitchProcessors[voice] = pitchProcessor;
-        wetPitchGains[voice] = wetPitchGain;
-      } else {
-        gain.connect(panner);
-      }
+      const dryDelay = context.createDelay(1);
+      const dryPitchGain = context.createGain();
+      const pitchProcessor: ControllablePitchNode = useAudioWorklet
+        ? (() => {
+            const node = new AudioWorkletNode(context, "tagmix-pitch-shifter", {
+              channelCount: 1,
+              channelCountMode: "explicit",
+              numberOfInputs: 1,
+              numberOfOutputs: 1,
+              outputChannelCount: [1],
+              parameterData: { pitchRatio: initialPitchRatio },
+              processorOptions: { latencySamples: CLIENT_PITCH_LATENCY_SAMPLES },
+            });
+            return {
+              node,
+              setPitchRatio: (ratio, atTime = context.currentTime) => {
+                node.parameters.get("pitchRatio")?.setTargetAtTime(ratio, atTime, 0.02);
+              },
+            };
+          })()
+        : createScriptProcessorPitchNode(context, initialPitchRatio, CLIENT_PITCH_LATENCY_SAMPLES);
+      const wetPitchGain = context.createGain();
+      dryDelay.delayTime.value = CLIENT_PITCH_LATENCY_SAMPLES / context.sampleRate;
+      dryPitchGain.gain.value = useClientPitch ? 0 : 1;
+      wetPitchGain.gain.value = useClientPitch ? 1 : 0;
+      gain.connect(dryDelay).connect(dryPitchGain).connect(panner);
+      gain.connect(pitchProcessor.node).connect(wetPitchGain).connect(panner);
+      dryPitchGains[voice] = dryPitchGain;
+      pitchProcessors[voice] = pitchProcessor;
+      wetPitchGains[voice] = wetPitchGain;
       panner.connect(master);
       gains[voice] = gain;
       panners[voice] = panner;
@@ -405,7 +375,7 @@ export function Mixer({ tag }: { tag: Tag }) {
       pitchProcessors,
       wetPitchGains,
     };
-    if (useClientProcessing) setClientPitchBackend(useAudioWorklet ? "worklet" : "fallback");
+    setClientPitchBackend(useAudioWorklet ? "worklet" : "fallback");
     applyGraphMix();
     applyGraphPitch();
     return graphRef.current;
@@ -470,24 +440,35 @@ export function Mixer({ tag }: { tag: Tag }) {
     });
   }
 
+  async function changeMarks(method: "POST" | "DELETE", mark?: CueMark, id?: string) {
+    if (!user || marksBusy.current || !marksResource.data) return;
+    marksBusy.current = true;
+    setMarksSaving(true);
+    setMarksError("");
+    try {
+      const result = await accountRequest<{ marks: CueMark[] }>(`marks/${tag.id}${id ? `/${encodeURIComponent(id)}` : ""}`, {
+        userId: user.id, method, body: mark ? { marks: [mark] } : undefined,
+      });
+      marksResource.replace(result);
+    } catch (error) { setMarksError(errorMessage(error)); }
+    finally { marksBusy.current = false; setMarksSaving(false); }
+  }
+
   function addMark() {
     const nextNumber = marks.length + 1;
-    const id = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${nextNumber}`;
-    setMarks((current) =>
-      [...current, { id, time: currentTime, label: `Mark ${nextNumber}` }].sort((a, b) => a.time - b.time),
-    );
+    const id = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    void changeMarks("POST", { id, time: currentTime, label: `Mark ${nextNumber}` });
   }
 
   function removeMark(id: string) {
-    setMarks((current) => current.filter((mark) => mark.id !== id));
+    void changeMarks("DELETE", undefined, id);
   }
 
   function resetMix() {
     setMix(defaultMix());
     setSolo(new Set());
     setSpeed(1);
-    setPitchMode("client");
-    setPitchSemitones(0);
+    onPitchChange(0);
   }
 
   const progress = duration ? Math.min(100, (currentTime / duration) * 100) : 0;
@@ -501,7 +482,6 @@ export function Mixer({ tag }: { tag: Tag }) {
     >
       <header className="panel-header mixer-header">
         <div>
-          <p className="panel-kicker">Shape the sound</p>
           <h2 id="mixer-heading">Four-part mixer</h2>
         </div>
         <button className="icon-text-button" onClick={resetMix} type="button">
@@ -556,7 +536,7 @@ export function Mixer({ tag }: { tag: Tag }) {
             />
           </div>
         </div>
-        <button className="mark-button" disabled={!duration} onClick={addMark} type="button">
+        <button className="mark-button" disabled={!duration || !user || !marksResource.data || marksSaving} onClick={addMark} type="button">
           <Icon name="marker" size={17} /> Mark
         </button>
       </div>
@@ -564,7 +544,7 @@ export function Mixer({ tag }: { tag: Tag }) {
       {playbackError && <p className="playback-error" role="alert">{playbackError}</p>}
 
       <div className="speed-row">
-        <span>Speed <small>pitch preserved</small></span>
+        <span>Speed</span>
         <div className="speed-control" aria-label="Playback speed">
           {SPEEDS.map((value) => (
             <button
@@ -582,53 +562,9 @@ export function Mixer({ tag }: { tag: Tag }) {
 
       <div className="pitch-row">
         <div className="pitch-setting">
-          <span>Pitch <small>speed unchanged</small></span>
-          <div className="pitch-stepper">
-            <button
-              aria-label="Lower pitch one semitone"
-              disabled={pitchSemitones <= MIN_PITCH_SEMITONES}
-              onClick={() => setPitchSemitones((value) => normalizePitchSemitones(value - 1))}
-              type="button"
-            >−</button>
-            <output aria-live="polite">{formatPitchSemitones(pitchSemitones)}</output>
-            <button
-              aria-label="Raise pitch one semitone"
-              disabled={pitchSemitones >= MAX_PITCH_SEMITONES}
-              onClick={() => setPitchSemitones((value) => normalizePitchSemitones(value + 1))}
-              type="button"
-            >+</button>
-          </div>
+          <span>Pitch</span>
+          <PitchControl value={pitchSemitones} onChange={onPitchChange} />
         </div>
-        <fieldset className="pitch-mode-control">
-          <legend>Pitch processing</legend>
-          <label>
-            <input
-              checked={pitchMode === "client"}
-              name={`pitch-mode-${tag.id}`}
-              onChange={() => setPitchMode("client")}
-              type="radio"
-              value="client"
-            />
-            <span>Client side</span>
-          </label>
-          <label>
-            <input
-              checked={pitchMode === "server"}
-              name={`pitch-mode-${tag.id}`}
-              onChange={() => setPitchMode("server")}
-              type="radio"
-              value="server"
-            />
-            <span>Server side</span>
-          </label>
-        </fieldset>
-        <p className="pitch-method-note">
-          {pitchMode === "client"
-            ? clientPitchBackend === "fallback"
-              ? "Real-time compatibility processing in this browser."
-              : "Real-time processing in this browser."
-            : "Prepared and cached on the server; pitch changes reload the tracks."}
-        </p>
       </div>
 
       <div className="voice-list">
@@ -695,8 +631,11 @@ export function Mixer({ tag }: { tag: Tag }) {
       <div className="marks-section">
         <div className="marks-heading">
           <div><Icon name="marker" size={17} /><strong>Saved marks</strong></div>
-          <span>{marks.length ? `${marks.length} saved on this device` : "Add one from the play bar"}</span>
+          <span aria-live="polite">{marksSaving ? "Saving…" : user && !accountLoading && !marksResource.loading && !marks.length ? "Choose Mark during playback" : ""}</span>
         </div>
+        {!accountLoading && !user && <p className="marks-account-note"><Link className="text-link" href={`/account?next=/tags/${tag.id}`}>Sign in to save marks</Link>.</p>}
+        {(accountLoading || marksResource.loading) && <p className="marks-account-note" role="status">Loading marks…</p>}
+        {(marksError || marksResource.error) && <p className="form-error" role="alert">{marksError || marksResource.error} <button className="text-link" onClick={() => { setMarksError(""); marksResource.reload(); }} type="button">Reload marks</button></p>}
         {marks.length > 0 && (
           <div className="mark-list">
             {marks.map((mark) => (
@@ -704,7 +643,7 @@ export function Mixer({ tag }: { tag: Tag }) {
                 <button onClick={() => seek(mark.time)} type="button">
                   <span>{mark.label}</span><strong>{formatTime(mark.time)}</strong>
                 </button>
-                <button aria-label={`Delete ${mark.label}`} onClick={() => removeMark(mark.id)} type="button">
+                <button aria-label={`Delete ${mark.label}`} disabled={marksSaving} onClick={() => removeMark(mark.id)} type="button">
                   <Icon name="trash" size={14} />
                 </button>
               </div>

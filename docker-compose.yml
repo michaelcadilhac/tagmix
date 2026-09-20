@@ -7,9 +7,12 @@ services:
       - "3000:3000"
     environment:
       TAGMIX_DATA_DIR: /data
+      TAGMIX_ACCOUNT_DIR: /accounts
+      TAGMIX_APP_ORIGIN: ${TAGMIX_APP_ORIGIN:-}
       TAGMIX_CATALOG_TTL_MS: 86400000
     volumes:
       - tagmix-data:/data
+      - tagmix-accounts:/accounts
     healthcheck:
       test:
         - CMD
@@ -23,3 +26,4 @@ services:
 
 volumes:
   tagmix-data:
+  tagmix-accounts:

@@ -4,28 +4,10 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/icons";
 import { Mixer } from "@/components/mixer";
+import { KeyPitchPipe, ReferenceToneProvider } from "@/components/note-tools";
 import { ScoreViewer } from "@/components/score-viewer";
-import { formatCount } from "@/lib/format";
+import { TagAccountActions } from "@/components/tag-account-actions";
 import type { Tag } from "@/lib/types";
-
-function qualityCopy(tag: Tag): { label: string; description: string } {
-  if (tag.audioQuality === "isolated") {
-    return {
-      label: "Isolated source parts",
-      description: "Each learning track already contains only its named voice.",
-    };
-  }
-  if (tag.audioQuality === "extractable") {
-    return {
-      label: "Parts cleanly extracted",
-      description: "The named voice and the three reference voices use separate stereo channels; TagMix plays only the named-voice channel.",
-    };
-  }
-  return {
-    label: "Best-effort source mix",
-    description: "The named voice is emphasized, but the recording may also contain the other voices, so quiet reference parts may remain in playback.",
-  };
-}
 
 function WorkspaceLoading() {
   return (
@@ -43,7 +25,8 @@ function WorkspaceLoading() {
   );
 }
 
-export function TagWorkspace({ tagId }: { tagId: string }) {
+export function TagWorkspace({ tagId, initialPitch }: { tagId: string; initialPitch?: number }) {
+  const [pitchSemitones, setPitchSemitones] = useState(initialPitch ?? 0);
   const [retry, setRetry] = useState(0);
   const requestUrl = useMemo(
     () => `/api/tags/${encodeURIComponent(tagId)}?attempt=${retry}`,
@@ -95,26 +78,22 @@ export function TagWorkspace({ tagId }: { tagId: string }) {
     );
   }
 
-  const quality = qualityCopy(tag);
   const subtitle = [tag.alternateTitle && `aka “${tag.alternateTitle}”`, tag.version].filter(Boolean).join(" · ");
 
   return (
-    <article className="workspace-page">
-      <Link className="back-link" href="/"><Icon name="arrow-left" size={17} /> All tags</Link>
-
+    <ReferenceToneProvider key={tag.id}><article className="workspace-page">
       <header className="workspace-hero">
         <div className="workspace-heading">
-          <p className="eyebrow">Rehearsal room</p>
           <h1>{tag.title}</h1>
           {subtitle && <p className="workspace-subtitle">{subtitle}</p>}
         </div>
         <dl className="workspace-facts">
-          <div><dt>Key</dt><dd>{tag.key || "—"}</dd></div>
+          <div><dt>Key</dt><dd className="workspace-key"><span>{tag.key || "—"}</span><KeyPitchPipe musicalKey={tag.key} pitchSemitones={pitchSemitones} /></dd></div>
           <div><dt>Style</dt><dd>{tag.style}</dd></div>
-          <div><dt>Rating</dt><dd>{tag.rating === null ? "—" : `${tag.rating.toFixed(1)} ★`}</dd></div>
-          <div><dt>Listens</dt><dd>{formatCount(tag.downloads)}</dd></div>
         </dl>
       </header>
+
+      <TagAccountActions key={tag.id} tagId={tag.id} pitchSemitones={pitchSemitones} />
 
       <div className="workspace-grid">
         <ScoreViewer
@@ -123,16 +102,15 @@ export function TagWorkspace({ tagId }: { tagId: string }) {
           tagId={tag.id}
           title={tag.title}
         />
-        <Mixer key={tag.id} tag={tag} />
+        <Mixer key={tag.id} tag={tag} pitchSemitones={pitchSemitones} onPitchChange={setPitchSemitones} initialPitch={initialPitch} />
       </div>
 
       <section className="tag-notes" aria-labelledby="about-heading">
         <div>
-          <p className="eyebrow">About this tag</p>
           <h2 id="about-heading">Credits & notes</h2>
         </div>
         <div className="tag-notes-grid">
-          <div className="note-wide"><h3>Learning-track audio</h3><p><strong>{quality.label}.</strong> {quality.description}</p></div>
+          {tag.audioQuality === "best-effort" && <div className="note-wide"><h3>Best-effort audio</h3><p>Other voices may still be audible in each part.</p></div>}
           {tag.arranger && <div><h3>Arranged by</h3><p>{tag.arranger}</p></div>}
           {tag.quartet && <div><h3>Learning tracks</h3><p>{tag.quartet}</p></div>}
           {tag.provider && <div><h3>Provided by</h3><p>{tag.provider}</p></div>}
@@ -143,6 +121,6 @@ export function TagWorkspace({ tagId }: { tagId: string }) {
           View original tag page <Icon name="external" size={16} />
         </a>
       </section>
-    </article>
+    </article></ReferenceToneProvider>
   );
 }

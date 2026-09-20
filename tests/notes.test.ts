@@ -3,11 +3,29 @@ import {
   PITCH_CLASSES,
   frequencyForMidi,
   midiForPitch,
+  midiForKey,
   noteLabel,
   pianoKeys,
 } from "@/lib/notes";
 
 describe("reference-note tools", () => {
+  it("plays the written tonic for major, minor, and modal keys", () => {
+    expect(midiForKey("C Major")).toBe(60);
+    expect(midiForKey("A Minor")).toBe(69);
+    expect(midiForKey("B♭ Dorian")).toBe(70);
+    expect(midiForKey(" F# Minor ")).toBe(66);
+    expect(midiForKey("Eb Major")).toBe(63);
+    expect(midiForKey("C♭ Major")).toBe(59);
+  });
+
+  it("transposes the tonic across octave boundaries and rejects unknown keys", () => {
+    expect(midiForKey("B Major", 2)).toBe(73);
+    expect(midiForKey("C Major", -6)).toBe(54);
+    expect(frequencyForMidi(midiForKey("A Major", 3)!)).toBeCloseTo(440 * 2 ** (3 / 12), 8);
+    for (const key of ["", "Unknown", "Concert C", "C Major / D Major", "H Major"]) expect(midiForKey(key)).toBeNull();
+    expect(midiForKey("C Major", NaN)).toBeNull();
+  });
+
   it("maps equal-tempered notes from concert A", () => {
     expect(frequencyForMidi(69)).toBe(440);
     expect(frequencyForMidi(midiForPitch(4, 0))).toBeCloseTo(261.6256, 4);

@@ -34,6 +34,16 @@ export function midiForPitch(octave: number, semitone: number): number {
   return (octave + 1) * 12 + semitone;
 }
 
+/** The written tonic in octave 4, shifted by the rehearsal pitch setting. */
+export function midiForKey(key: string, pitchSemitones = 0): number | null {
+  const match = /^([a-g])\s*([#♯b♭]?)(?:\s+(?:major|minor|dorian|phrygian|lydian|mixolydian|aeolian|ionian|locrian))?$/i.exec(key.trim());
+  if (!match || !Number.isInteger(pitchSemitones)) return null;
+  const natural = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  const semitone = natural[match[1].toUpperCase() as keyof typeof natural];
+  const accidental = match[2] === "#" || match[2] === "♯" ? 1 : match[2] ? -1 : 0;
+  return midiForPitch(4, semitone) + accidental + pitchSemitones;
+}
+
 export function frequencyForMidi(midi: number): number {
   if (!Number.isFinite(midi)) throw new Error("A MIDI note must be finite.");
   return 440 * 2 ** ((midi - 69) / 12);

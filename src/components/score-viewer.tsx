@@ -25,7 +25,6 @@ export function ScoreViewer({ originalUrl, sheetType, tagId, title }: ScoreViewe
     <section className="workspace-panel score-panel" aria-labelledby="score-heading">
       <header className="panel-header">
         <div>
-          <p className="panel-kicker">Follow along</p>
           <h2 id="score-heading">Sheet music</h2>
         </div>
         <div className="score-tools" aria-label="Score zoom controls">
@@ -44,13 +43,12 @@ export function ScoreViewer({ originalUrl, sheetType, tagId, title }: ScoreViewe
           <div className="score-loading" role="status">
             <span className="loading-note">♪</span>
             <strong>Preparing the score</strong>
-            <span>Rendering and trimming empty page space…</span>
           </div>
         )}
         {failed ? (
           <div className="score-error" role="alert">
             <span aria-hidden="true">♭</span>
-            <strong>The cropped preview isn’t available.</strong>
+            <strong>The score preview isn’t available.</strong>
             <p>You can still open the original {sheetType.toLocaleUpperCase()} score.</p>
             <a className="button button-secondary" href={originalUrl} rel="noreferrer" target="_blank">
               Open original <Icon name="external" size={16} />
@@ -75,7 +73,6 @@ export function ScoreViewer({ originalUrl, sheetType, tagId, title }: ScoreViewe
         )}
       </div>
       <footer className="score-footer">
-        <span>Blank margins are removed automatically.</span>
         <a href={originalUrl} rel="noreferrer" target="_blank">Original file <Icon name="external" size={14} /></a>
       </footer>
       <NoteTools collapsible />

@@ -1,0 +1,10 @@
+export type AccountUser = { id: string; email: string };
+export type CueMark = { id: string; time: number; label: string };
+export type SavedTag = { id: number; title: string; version: string; key: string };
+export type FolderTag = SavedTag & { pitchSemitones: number };
+export type FolderAccess = "view" | "edit";
+export type FolderSummary = { id: string; name: string; shareToken: string; count: number; revision: number; ownerEmail: string; shareAccess: FolderAccess; access: FolderAccess | "owner" };
+export type SavedFolder = FolderSummary & { tags: FolderTag[] };
+export type SharedFolder = { name: string; ownerEmail: string; tags: FolderTag[]; access: FolderAccess };
+export type FolderSharing = { access: FolderAccess };
+export type HistoryItem = SavedTag & { viewedAt: string };

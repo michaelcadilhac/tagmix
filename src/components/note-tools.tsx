@@ -1,13 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Icon } from "@/components/icons";
 import {
   PITCH_CLASSES,
   frequencyForMidi,
   midiForPitch,
+  midiForKey,
   noteLabel,
+  pitchForMidi,
   pianoKeys,
 } from "@/lib/notes";
 
@@ -167,6 +169,34 @@ function useTonePlayer() {
   return { activeNotes, error, play, playedNote };
 }
 
+const ReferenceToneContext = createContext<ReturnType<typeof useTonePlayer> | null>(null);
+
+export function ReferenceToneProvider({ children }: { children: ReactNode }) {
+  const player = useTonePlayer();
+  return <ReferenceToneContext.Provider value={player}>{children}</ReferenceToneContext.Provider>;
+}
+
+function useReferenceTone() {
+  const player = useContext(ReferenceToneContext);
+  if (!player) throw new Error("Reference notes require a tone provider.");
+  return player;
+}
+
+export function KeyPitchPipe({ musicalKey, pitchSemitones }: { musicalKey: string; pitchSemitones: number }) {
+  const { activeNotes, error, play } = useReferenceTone();
+  const midi = midiForKey(musicalKey, pitchSemitones);
+  if (midi === null) return null;
+  const pitch = pitchForMidi(midi);
+  const label = `Play ${pitch.spokenLabel} ${pitch.octave} on the pitch pipe`;
+  return <>
+    <button className={`key-pitch-pipe${activeNotes.has(`pitch-pipe:${midi}`) ? " is-active" : ""}`}
+      type="button" aria-label={label} title={label} onClick={() => play(midi, "pitch-pipe")}>
+      <Icon name="music" size={16} />
+    </button>
+    {error && <span className="key-pitch-error" role="alert">{error}</span>}
+  </>;
+}
+
 function PitchPipe({ activeNotes, onPlay }: {
   activeNotes: ReadonlySet<string>;
   onPlay: (midi: number, instrument: Instrument) => void;
@@ -177,7 +207,6 @@ function PitchPipe({ activeNotes, onPlay }: {
     <section className="instrument-card pitch-pipe" aria-labelledby="pitch-pipe-heading">
       <header className="instrument-heading">
         <div>
-          <p className="panel-kicker">Sustained tone</p>
           <h3 id="pitch-pipe-heading">Pitch pipe</h3>
         </div>
         <label className="octave-select">
@@ -187,7 +216,6 @@ function PitchPipe({ activeNotes, onPlay }: {
           </select>
         </label>
       </header>
-      <p className="instrument-description">Choose a chromatic pitch for a clear, sustained reference.</p>
       <div className="pitch-pipe-notes" role="group" aria-label={`Pitch pipe notes in octave ${octave}`}>
         {PITCH_CLASSES.map((pitch) => {
           const midi = midiForPitch(octave, pitch.semitone);
@@ -221,12 +249,11 @@ function Piano({ activeNotes, onPlay }: {
     <section className="instrument-card piano" aria-labelledby="piano-heading">
       <header className="instrument-heading">
         <div>
-          <p className="panel-kicker">Three octaves</p>
           <h3 id="piano-heading">Piano keyboard</h3>
         </div>
         <span className="piano-range">C3–C6</span>
       </header>
-      <p className="instrument-description">Play labeled piano-style keys. Scroll sideways to reach the full range.</p>
+      <p className="instrument-description">Scroll to reach more keys.</p>
       <div className="piano-scroll" role="group" aria-label="Piano keyboard from C3 through C6">
         <div className="piano-keyboard" style={keyboardStyle}>
           {PIANO_KEYS.map((key) => {
@@ -258,7 +285,7 @@ function Piano({ activeNotes, onPlay }: {
 }
 
 function ToolContents({ instrument }: { instrument?: Instrument }) {
-  const { activeNotes, error, play, playedNote } = useTonePlayer();
+  const { activeNotes, error, play, playedNote } = useReferenceTone();
   const readout = useMemo(() => {
     if (error) return { note: "Audio unavailable", detail: error };
     if (!playedNote) return { note: "Ready", detail: "Tap a note, or focus one and press Enter or Space." };
@@ -284,6 +311,12 @@ function ToolContents({ instrument }: { instrument?: Instrument }) {
 }
 
 export function NoteTools({ collapsible = false }: { collapsible?: boolean }) {
+  const sharedPlayer = useContext(ReferenceToneContext);
+  const contents = <NoteToolsContent collapsible={collapsible} />;
+  return sharedPlayer ? contents : <ReferenceToneProvider>{contents}</ReferenceToneProvider>;
+}
+
+function NoteToolsContent({ collapsible }: { collapsible: boolean }) {
   const contentId = useId();
   const [activeInstrument, setActiveInstrument] = useState<Instrument | null>(null);
 
@@ -309,7 +342,7 @@ export function NoteTools({ collapsible = false }: { collapsible?: boolean }) {
               onClick={() => setActiveInstrument((current) => current === "pitch-pipe" ? null : "pitch-pipe")}
               type="button"
             >
-              Pitchpipe
+              Pitch pipe
             </button>
           </div>
         </div>
@@ -324,13 +357,7 @@ export function NoteTools({ collapsible = false }: { collapsible?: boolean }) {
 
   return (
     <section className="note-tools note-tools-standalone" aria-labelledby="note-tools-heading">
-      <header className="note-tools-header">
-        <div>
-          <p className="panel-kicker">Reference tones</p>
-          <h2 id="note-tools-heading">Pitch pipe & piano</h2>
-        </div>
-        <p>Everything plays in your browser. Nothing is recorded or sent anywhere.</p>
-      </header>
+      <h2 className="sr-only" id="note-tools-heading">Pitch pipe & piano</h2>
       <ToolContents />
     </section>
   );

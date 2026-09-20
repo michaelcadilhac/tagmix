@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import { TagWorkspace } from "@/components/tag-workspace";
 import { getTag } from "@/lib/catalog";
+import { pitchFromUrl } from "@/lib/pitch";
 
-type PageProps = { params: Promise<{ id: string }> };
+type PageProps = { params: Promise<{ id: string }>; searchParams: Promise<{ pitch?: string | string[] }> };
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { id } = await params;
@@ -16,7 +17,8 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   }
 }
 
-export default async function TagPage({ params }: PageProps) {
+export default async function TagPage({ params, searchParams }: PageProps) {
   const { id } = await params;
-  return <TagWorkspace tagId={id} />;
+  const initialPitch = pitchFromUrl((await searchParams).pitch);
+  return <TagWorkspace key={`${id}:${initialPitch ?? "device"}`} tagId={id} initialPitch={initialPitch} />;
 }

@@ -122,14 +122,14 @@ try {
     viewport: window.innerWidth,
     width: document.documentElement.scrollWidth,
     cards: document.querySelectorAll(".tag-card:not(.tag-card-skeleton)").length,
-    count: document.querySelector(".hero-stat strong")?.textContent,
+    count: document.querySelector("#catalog-heading")?.textContent,
     prominentQualityLabels: document.querySelectorAll(".quality-pill").length,
-    pitchToolsLink: document.querySelector('.hero-actions a[href="/tools"]')?.textContent
+    pitchToolsLink: document.querySelector('.header-nav a[href="/tools"]')?.textContent
   })`);
   if (home.width > home.viewport
     || home.cards < 1
     || home.prominentQualityLabels !== 0
-    || !home.pitchToolsLink?.includes("pitch pipe & piano")) {
+    || !home.pitchToolsLink?.includes("Pitch tools")) {
     throw new Error(`Mobile catalog layout failed: ${JSON.stringify(home)}`);
   }
 
@@ -140,9 +140,26 @@ try {
   })()`);
   await devtools.waitFor(`document.querySelector(".catalog-heading-row h2")?.textContent.includes("matches for")`);
 
+  // Marks require an account. Use supplied test credentials or create a smoke account.
+  const testEmail = process.env.TAGMIX_TEST_EMAIL ?? `smoke-${Date.now()}@example.test`;
+  const testPassword = process.env.TAGMIX_TEST_PASSWORD ?? `smoke-password-${Date.now()}-${Math.random()}`;
+  const authPath = process.env.TAGMIX_TEST_EMAIL ? "login" : "signup";
+  const authStatus = await devtools.evaluate(`(async () => {
+    const response = await fetch("/api/account/${authPath}", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: ${JSON.stringify(testEmail)}, password: ${JSON.stringify(testPassword)} })
+    });
+    return response.status;
+  })()`);
+  if (authStatus !== 200) throw new Error(`Smoke account sign-in failed: ${authStatus}`);
+
+  await devtools.evaluate(`localStorage.setItem("tagmix:mix:1890", JSON.stringify({ pitchMode: "server", pitchSemitones: 2, speed: 1 }))`);
   await devtools.send("Page.navigate", { url: `${baseUrl}/tags/1890` });
   await devtools.waitFor(`document.readyState === "complete"`);
   await devtools.waitFor(`document.querySelector(".track-readiness")?.textContent.includes("All four parts ready")`, 45_000);
+  await devtools.waitFor(`document.querySelector(".pitch-stepper output")?.textContent === "+2 semitones"`);
+  await devtools.waitFor(`!JSON.parse(localStorage.getItem("tagmix:mix:1890")).pitchMode`);
+  await devtools.evaluate(`document.querySelector(".mixer-header .icon-text-button").click()`, true);
   const detail = await devtools.evaluate(`({
     viewport: window.innerWidth,
     width: document.documentElement.scrollWidth,
@@ -151,8 +168,6 @@ try {
     prominentQualityLabels: document.querySelectorAll(".quality-pill").length,
     audioNote: document.querySelector(".tag-notes-grid .note-wide p")?.textContent,
     sourceLink: document.querySelector(".tag-notes .source-link")?.href,
-    pitchModes: [...document.querySelectorAll('.pitch-mode-control input[type="radio"]')].map(input => input.value),
-    selectedPitchMode: document.querySelector('.pitch-mode-control input[type="radio"]:checked')?.value,
     pitchValue: document.querySelector(".pitch-stepper output")?.textContent,
     noteToolsClosed: !document.querySelector(".note-tools-embedded")?.classList.contains("is-open"),
     noteToolButtons: [...document.querySelectorAll(".note-tools-launcher-buttons button")].map(button => ({
@@ -161,8 +176,7 @@ try {
     })),
     pitchControlsVisible: [
       document.querySelector(".speed-control button:last-child"),
-      document.querySelector(".pitch-stepper"),
-      document.querySelector('.pitch-mode-control input[value="server"] + span')
+      document.querySelector(".pitch-stepper")
     ].every(element => {
       const bounds = element?.getBoundingClientRect();
       return bounds && bounds.left >= 0 && bounds.right <= window.innerWidth;
@@ -171,15 +185,12 @@ try {
   if (detail.width > detail.viewport
     || detail.voices !== 4
     || detail.prominentQualityLabels !== 0
-    || !detail.audioNote?.includes("Parts cleanly extracted")
     || !/\/tag-1890-.+/.test(detail.sourceLink ?? "")
-    || detail.pitchModes.join(",") !== "client,server"
-    || detail.selectedPitchMode !== "client"
     || detail.pitchValue !== "Original key"
     || !detail.noteToolsClosed
     || JSON.stringify(detail.noteToolButtons) !== JSON.stringify([
       { label: "Piano", expanded: "false" },
-      { label: "Pitchpipe", expanded: "false" }
+      { label: "Pitch pipe", expanded: "false" }
     ])
     || !detail.pitchControlsVisible) {
     throw new Error(`Mobile rehearsal layout failed: ${JSON.stringify(detail)}`);
@@ -312,21 +323,22 @@ try {
   // Audio elements are deliberately detached from the DOM, so verify transport text too.
   const transportTime = await devtools.evaluate(`document.querySelector(".time-row span")?.textContent`);
   if (playbackTime === 0 && transportTime === "0:00") throw new Error("Mixer playback did not advance.");
+  await devtools.waitFor(`!document.querySelector(".mark-button")?.disabled`);
+  const previousMarkCount = await devtools.evaluate(`document.querySelectorAll(".mark-chip").length`);
   await devtools.evaluate(`document.querySelector(".mark-button").click()`, true);
-  await devtools.waitFor(`document.querySelectorAll(".mark-chip").length === 1`);
+  await devtools.waitFor(`document.querySelectorAll(".mark-chip").length === ${previousMarkCount + 1}`);
   await devtools.evaluate(`document.querySelector(".play-button").click()`, true);
 
-  await devtools.evaluate(`document.querySelector('.pitch-mode-control input[value="server"]').click()`, true);
-  await devtools.waitFor(`document.querySelector('.pitch-mode-control input[value="server"]')?.checked === true`);
-  await devtools.waitFor(`performance.getEntriesByType("resource").some(entry => entry.name.includes("/audio/") && entry.name.includes("pitch=1"))`, 120_000);
-  await devtools.waitFor(`document.querySelector(".track-readiness")?.textContent.includes("All four parts ready")`, 120_000);
-  const serverPitch = await devtools.evaluate(`({
-    selectedPitchMode: document.querySelector('.pitch-mode-control input[type="radio"]:checked')?.value,
-    requestedVariant: performance.getEntriesByType("resource").some(entry => entry.name.includes("/audio/") && entry.name.includes("pitch=1")),
-    transportTime: document.querySelector(".time-row span")?.textContent
+  const beforePitchChange = await devtools.evaluate(`document.querySelector(".time-row span")?.textContent`);
+  await devtools.evaluate(`document.querySelector('[aria-label="Raise pitch one semitone"]').click()`, true);
+  await devtools.waitFor(`document.querySelector(".pitch-stepper output")?.textContent === "+2 semitones"`);
+  const browserOnlyPitch = await devtools.evaluate(`({
+    requestedVariant: performance.getEntriesByType("resource").some(entry => entry.name.includes("/audio/") && entry.name.includes("pitch=")),
+    transportTime: document.querySelector(".time-row span")?.textContent,
+    hasModeSelector: !!document.querySelector(".pitch-mode-control")
   })`);
-  if (serverPitch.selectedPitchMode !== "server" || !serverPitch.requestedVariant || serverPitch.transportTime !== "0:00") {
-    throw new Error(`Server pitch source switching failed: ${JSON.stringify(serverPitch)}`);
+  if (browserOnlyPitch.requestedVariant || browserOnlyPitch.hasModeSelector || browserOnlyPitch.transportTime !== beforePitchChange) {
+    throw new Error(`Browser-only pitch regression: ${JSON.stringify(browserOnlyPitch)}`);
   }
 
   await devtools.send("Page.navigate", { url: `${baseUrl}/tools` });
@@ -341,19 +353,17 @@ try {
     pitchPipeNotes: document.querySelectorAll(".note-tools-standalone .pitch-pipe-notes button").length,
     pianoKeys: document.querySelectorAll(".note-tools-standalone .piano-key").length,
     readout: document.querySelector(".note-tools-standalone .note-readout")?.textContent,
-    backLink: document.querySelector('.tools-page a[href="/"]')?.textContent,
+    backLink: document.querySelector('.header-nav a[href="/"]')?.textContent,
     textFits: [
-      document.querySelector(".tools-page-hero h1"),
-      document.querySelector(".tools-page-hero > p:last-child"),
-      document.querySelector(".note-tools-header > p")
+      document.querySelector(".tools-page-hero h1")
     ].every(element => element && element.scrollWidth <= element.clientWidth)
   })`);
   if (standaloneTools.width > standaloneTools.viewport
-    || standaloneTools.heading !== "Find your note."
+    || standaloneTools.heading !== "Pitch pipe & piano"
     || standaloneTools.pitchPipeNotes !== 12
     || standaloneTools.pianoKeys !== 37
     || !standaloneTools.readout?.includes("466.2 Hz")
-    || !standaloneTools.backLink?.includes("Back to tag library")
+    || !standaloneTools.backLink?.includes("Browse tags")
     || !standaloneTools.textFits) {
     throw new Error(`Standalone pitch tools failed: ${JSON.stringify(standaloneTools)}`);
   }
@@ -362,7 +372,7 @@ try {
     await writeFile(`${process.env.TAGMIX_SCREENSHOT_DIR}/standalone-tools.png`, screenshot.data, "base64");
   }
 
-  console.log(JSON.stringify({ home, detail, embeddedTools, clientPitch, clientBackend, serverPitch, standaloneTools, transportTime, markSaved: true }, null, 2));
+  console.log(JSON.stringify({ home, detail, embeddedTools, clientPitch, clientBackend, browserOnlyPitch, standaloneTools, transportTime, markSaved: true }, null, 2));
 } finally {
   devtools?.close();
   if (browser.exitCode === null) {

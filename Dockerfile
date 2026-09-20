@@ -17,6 +17,7 @@ WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     TAGMIX_DATA_DIR=/data \
+    TAGMIX_ACCOUNT_DIR=/accounts \
     HOSTNAME=0.0.0.0 \
     PORT=3000
 
@@ -31,15 +32,15 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 1001 nodejs \
     && useradd --system --uid 1001 --gid nodejs nextjs \
-    && mkdir -p /data \
-    && chown nextjs:nodejs /data
+    && mkdir -p /data /accounts \
+    && chown nextjs:nodejs /data /accounts
 
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 USER nextjs
-VOLUME ["/data"]
+VOLUME ["/data", "/accounts"]
 EXPOSE 3000
 
 CMD ["node", "server.js"]

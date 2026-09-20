@@ -4,12 +4,6 @@ import { spawn } from "node:child_process";
 import { access, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import {
-  MAX_PITCH_SEMITONES,
-  MIN_PITCH_SEMITONES,
-  pitchCacheSegment,
-  semitonesToRatio,
-} from "@/lib/pitch";
 import { VOICES, type AudioQuality, type SourceMedia, type Tag, type Voice } from "@/lib/types";
 import {
   buildVoiceChannelProfile,
@@ -25,16 +19,15 @@ const ANALYSIS_SAMPLE_RATE = 2_000;
 const ANALYSIS_SECONDS = 120;
 const AUDIO_SAMPLE_RATE = 44_100;
 const AUDIO_CACHE_VERSION = "audio-v3";
-const SERVER_PITCH_CACHE_VERSION = "server-pitch-v1";
 const SHEET_CACHE_VERSION = "sheet-v1";
 const locks = new Map<string, Promise<unknown>>();
 let imageCommandPromise: Promise<string> | null = null;
-let rubberbandSupportPromise: Promise<boolean> | null = null;
 
 type AudioProbe = { channels: number };
 type AudioSetManifest = {
   contentSamples: Record<Voice, number>;
-  pitchSemitones: number;
+  // Retained for compatibility with existing original-key cache manifests.
+  pitchSemitones: 0;
   sampleRate: typeof AUDIO_SAMPLE_RATE;
   targetSamples: number;
   version: 1;
@@ -173,35 +166,6 @@ async function runCommand(command: string, args: string[], timeoutMs = 120_000):
       else reject(new CommandError(`${command} exited with ${code}: ${stderr.slice(-4_000)}`));
     });
   });
-}
-
-async function supportsRubberband(): Promise<boolean> {
-  if (!rubberbandSupportPromise) {
-    rubberbandSupportPromise = runCommand("ffmpeg", ["-hide_banner", "-filters"], 10_000)
-      .then((output) => /\brubberband\b/.test(output))
-      .catch(() => false);
-  }
-  return rubberbandSupportPromise;
-}
-
-async function serverPitchFilter(semitones: number): Promise<string | null> {
-  if (semitones === 0) return null;
-  const ratio = semitonesToRatio(semitones);
-  if (await supportsRubberband()) {
-    return [
-      `rubberband=pitch=${ratio.toFixed(10)}`,
-      "tempo=1",
-      "transients=smooth",
-      "detector=soft",
-      "phase=laminar",
-      "window=long",
-      "formant=preserved",
-      "pitchq=quality",
-    ].join(":");
-  }
-
-  const shiftedRate = 44_100 * ratio;
-  return `aresample=44100,asetrate=${shiftedRate.toFixed(6)},aresample=44100,atempo=${(1 / ratio).toFixed(10)}`;
 }
 
 async function decodeStereoForAnalysis(input: string): Promise<StereoSamples> {
@@ -496,22 +460,19 @@ async function probePcmSampleCount(input: string): Promise<number> {
   return Math.round(durationTicks * numerator / denominator * sampleRate);
 }
 
-function audioOutputDirectory(tagId: number, pitchSemitones: number): string {
-  const base = path.join(dataRoot(), "media", String(tagId), AUDIO_CACHE_VERSION);
-  return pitchSemitones === 0
-    ? base
-    : path.join(base, SERVER_PITCH_CACHE_VERSION, pitchCacheSegment(pitchSemitones));
+function audioOutputDirectory(tagId: number): string {
+  return path.join(dataRoot(), "media", String(tagId), AUDIO_CACHE_VERSION);
 }
 
 function audioSetManifestPath(directory: string): string {
   return path.join(directory, "audio-set.json");
 }
 
-function isAudioSetManifest(value: unknown, pitchSemitones: number): value is AudioSetManifest {
+function isAudioSetManifest(value: unknown): value is AudioSetManifest {
   if (!value || typeof value !== "object") return false;
   const manifest = value as Partial<AudioSetManifest>;
   return manifest.version === 1
-    && manifest.pitchSemitones === pitchSemitones
+    && manifest.pitchSemitones === 0
     && manifest.sampleRate === AUDIO_SAMPLE_RATE
     && Number.isSafeInteger(manifest.targetSamples)
     && (manifest.targetSamples ?? 0) > 0
@@ -520,10 +481,10 @@ function isAudioSetManifest(value: unknown, pitchSemitones: number): value is Au
       && (manifest.contentSamples?.[voice] ?? 0) > 0);
 }
 
-async function usableAudioSet(directory: string, pitchSemitones: number): Promise<boolean> {
+async function usableAudioSet(directory: string): Promise<boolean> {
   try {
     const manifest: unknown = JSON.parse(await readFile(audioSetManifestPath(directory), "utf8"));
-    if (!isAudioSetManifest(manifest, pitchSemitones)) return false;
+    if (!isAudioSetManifest(manifest)) return false;
     return (await Promise.all(
       VOICES.map((voice) => usableFile(path.join(directory, `${voice}.mp3`))),
     )).every(Boolean);
@@ -536,7 +497,6 @@ async function usableAudioSet(directory: string, pitchSemitones: number): Promis
 async function processAudioSet(
   tag: Tag,
   directory: string,
-  pitchSemitones: number,
 ): Promise<void> {
   const workDirectory = await mkdtemp(path.join(os.tmpdir(), `tagmix-audio-${tag.id}-`));
 
@@ -544,7 +504,6 @@ async function processAudioSet(
     const channelSelection = isSplitStereoRecording(tag.recording)
       ? await ensureVoiceChannelSelection(tag)
       : null;
-    const pitch = await serverPitchFilter(pitchSemitones);
     const processedEntries = await Promise.all(VOICES.map(async (voice) => {
       const media = tag.tracks[voice];
       const source = await ensureOriginal(tag.id, voice, media);
@@ -558,7 +517,6 @@ async function processAudioSet(
       const filter = [
         isolationFilterForMode(preparation.mode),
         "highpass=f=35",
-        pitch,
         "loudnorm=I=-18:TP=-1.5:LRA=11",
       ].filter(Boolean).join(",");
 
@@ -642,7 +600,7 @@ async function processAudioSet(
     }
     const manifest: AudioSetManifest = {
       contentSamples,
-      pitchSemitones,
+      pitchSemitones: 0,
       sampleRate: AUDIO_SAMPLE_RATE,
       targetSamples,
       version: 1,
@@ -656,18 +614,13 @@ async function processAudioSet(
   }
 }
 
-export async function ensureProcessedAudio(tag: Tag, voice: Voice, pitchSemitones = 0): Promise<string> {
-  if (!Number.isInteger(pitchSemitones)
-    || pitchSemitones < MIN_PITCH_SEMITONES
-    || pitchSemitones > MAX_PITCH_SEMITONES) {
-    throw new Error(`Pitch must be between ${MIN_PITCH_SEMITONES} and +${MAX_PITCH_SEMITONES} semitones.`);
-  }
-  const directory = audioOutputDirectory(tag.id, pitchSemitones);
+export async function ensureProcessedAudio(tag: Tag, voice: Voice): Promise<string> {
+  const directory = audioOutputDirectory(tag.id);
   const destination = path.join(directory, `${voice}.mp3`);
-  if (await usableAudioSet(directory, pitchSemitones)) return destination;
+  if (await usableAudioSet(directory)) return destination;
   await withLock(`audio-set:${directory}`, async () => {
-    if (await usableAudioSet(directory, pitchSemitones)) return;
-    await processAudioSet(tag, directory, pitchSemitones);
+    if (await usableAudioSet(directory)) return;
+    await processAudioSet(tag, directory);
   });
   return destination;
 }

@@ -1,12 +1,25 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/icons";
-import { formatCount, formatDate } from "@/lib/format";
+import { formatCount } from "@/lib/format";
+import { isCatalogSort } from "@/lib/search";
 import type { CatalogListResponse, TagSummary } from "@/lib/types";
 
 const PAGE_SIZE = 36;
+
+function updateSearch(values: Record<string, string>) {
+  const url = new URL(window.location.href);
+  for (const [key, value] of Object.entries(values)) {
+    if (value) url.searchParams.set(key, value);
+    else url.searchParams.delete(key);
+  }
+  // Keep the current results in history without adding an entry per keystroke.
+  // Next.js also updates useSearchParams when native history is changed.
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+}
 
 function TagCard({ tag, index }: { tag: TagSummary; index: number }) {
   const detail = [tag.alternateTitle && `aka “${tag.alternateTitle}”`, tag.version]
@@ -60,11 +73,22 @@ function CatalogSkeleton() {
 }
 
 export function CatalogBrowser() {
-  const [input, setInput] = useState("");
-  const [query, setQuery] = useState("");
-  const [style, setStyle] = useState("");
-  const [sort, setSort] = useState("relevance");
-  const [page, setPage] = useState(1);
+  const parameters = useSearchParams();
+  const urlInput = parameters.get("q") ?? "";
+  // Input changes must be synchronous to preserve the caret; Next updates the
+  // URL in a transition. Also reconcile input when Back/Forward restores a URL.
+  const [input, setInput] = useState(urlInput);
+  const [lastUrlInput, setLastUrlInput] = useState(urlInput);
+  if (lastUrlInput !== urlInput) {
+    setLastUrlInput(urlInput);
+    setInput(urlInput);
+  }
+  const query = urlInput.trim();
+  const style = parameters.get("style") ?? "";
+  const requestedSort = parameters.get("sort") ?? "relevance";
+  const sort = isCatalogSort(requestedSort) ? requestedSort : "relevance";
+  const requestedPage = Number(parameters.get("page") ?? 1);
+  const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
   const [retry, setRetry] = useState(0);
   const requestUrl = useMemo(() => {
     const parameters = new URLSearchParams({
@@ -87,32 +111,31 @@ export function CatalogBrowser() {
   const error = requestState.key === requestUrl ? requestState.error : "";
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setQuery(input.trim());
-      setPage(1);
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [input]);
-
-  useEffect(() => {
     const controller = new AbortController();
-    fetch(requestUrl, { signal: controller.signal })
-      .then(async (response) => {
-        const payload = (await response.json()) as CatalogListResponse | { error?: string };
-        if (!response.ok) throw new Error("error" in payload ? payload.error : "The catalog is unavailable.");
-        setRequestState({ key: requestUrl, data: payload as CatalogListResponse, error: "" });
-      })
-      .catch((requestError: unknown) => {
-        if ((requestError as Error).name !== "AbortError") {
-          setRequestState((current) => ({
-            key: requestUrl,
-            data: current.data,
-            error: requestError instanceof Error ? requestError.message : "The catalog is unavailable.",
-          }));
-        }
-      });
+    // Debounce requests, while saving the URL immediately even if a tag is opened
+    // before the debounce finishes. Restoring a URL must not reset its page.
+    const timer = window.setTimeout(() => {
+      fetch(requestUrl, { signal: controller.signal })
+        .then(async (response) => {
+          const payload = (await response.json()) as CatalogListResponse | { error?: string };
+          if (!response.ok) throw new Error("error" in payload ? payload.error : "The catalog is unavailable.");
+          setRequestState({ key: requestUrl, data: payload as CatalogListResponse, error: "" });
+        })
+        .catch((requestError: unknown) => {
+          if ((requestError as Error).name !== "AbortError") {
+            setRequestState((current) => ({
+              key: requestUrl,
+              data: current.data,
+              error: requestError instanceof Error ? requestError.message : "The catalog is unavailable.",
+            }));
+          }
+        });
+    }, 250);
 
-    return () => controller.abort();
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
   }, [requestUrl]);
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
@@ -123,13 +146,16 @@ export function CatalogBrowser() {
   }, [data, query]);
 
   function updateStyle(nextStyle: string) {
-    setStyle(nextStyle);
-    setPage(1);
+    updateSearch({ style: nextStyle, page: "" });
+  }
+
+  function updateInput(value: string) {
+    setInput(value);
+    updateSearch({ q: value, page: "" });
   }
 
   function updateSort(nextSort: string) {
-    setSort(nextSort);
-    setPage(1);
+    updateSearch({ sort: nextSort === "relevance" ? "" : nextSort, page: "" });
   }
 
   return (
@@ -137,20 +163,7 @@ export function CatalogBrowser() {
       <section className="catalog-hero">
         <div className="hero-music-lines" aria-hidden="true"><i /><i /><i /><i /><i /></div>
         <div className="hero-copy">
-          <p className="eyebrow"><Icon name="spark" size={16} /> Four parts. Your mix.</p>
-          <h1>Find your note.<br /><em>Hear the lock.</em></h1>
-          <p className="hero-description">
-            Search the four-part tag library, follow a cleanly cropped score, and shape every voice around you.
-          </p>
-          <div className="hero-actions">
-            <Link className="button button-secondary" href="/tools">
-              <Icon name="music" size={18} /> Open pitch pipe & piano
-            </Link>
-          </div>
-        </div>
-        <div className="hero-stat" aria-label={data ? `${data.catalogSize} compatible tags` : "Loading tag count"}>
-          <strong>{data ? formatCount(data.catalogSize) : "—"}</strong>
-          <span>complete<br />four-part tags</span>
+          <h1>Find a <em>tag.</em></h1>
         </div>
       </section>
 
@@ -161,13 +174,13 @@ export function CatalogBrowser() {
             <Icon name="search" size={23} />
             <input
               autoComplete="off"
-              onChange={(event) => setInput(event.target.value)}
+              onChange={(event) => updateInput(event.target.value)}
               placeholder="Search a title, arranger, or version…"
               type="search"
               value={input}
             />
             {input && (
-              <button aria-label="Clear search" className="search-clear" onClick={() => setInput("")} type="button">×</button>
+              <button aria-label="Clear search" className="search-clear" onClick={() => updateInput("")} type="button">×</button>
             )}
           </label>
           <div className="catalog-filters">
@@ -193,10 +206,8 @@ export function CatalogBrowser() {
 
         <div className="catalog-heading-row">
           <div>
-            <p className="eyebrow">Ready to rehearse</p>
             <h2 id="catalog-heading">{resultMessage}</h2>
           </div>
-          {data && <p className="catalog-freshness">Library updated {formatDate(data.sourceStamp || data.fetchedAt)}</p>}
         </div>
 
         {error ? (
@@ -217,7 +228,7 @@ export function CatalogBrowser() {
               <button
                 className="button button-secondary"
                 disabled={page <= 1 || loading}
-                onClick={() => setPage((value) => Math.max(1, value - 1))}
+                onClick={() => updateSearch({ page: page > 2 ? String(page - 1) : "" })}
                 type="button"
               >
                 <Icon name="chevron-left" size={18} /> Previous
@@ -226,7 +237,7 @@ export function CatalogBrowser() {
               <button
                 className="button button-secondary"
                 disabled={page >= totalPages || loading}
-                onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
+                onClick={() => updateSearch({ page: String(Math.min(totalPages, page + 1)) })}
                 type="button"
               >
                 Next <Icon name="chevron-right" size={18} />
@@ -238,7 +249,7 @@ export function CatalogBrowser() {
             <span aria-hidden="true">𝄽</span>
             <h3>No tags found on that note.</h3>
             <p>Try fewer words or choose another voicing.</p>
-            <button className="button button-secondary" onClick={() => { setInput(""); updateStyle(""); }} type="button">Clear filters</button>
+            <button className="button button-secondary" onClick={() => updateSearch({ q: "", style: "", page: "" })} type="button">Clear filters</button>
           </div>
         )}
       </section>

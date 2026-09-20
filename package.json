@@ -11,12 +11,13 @@
     "start:https-proxy": "node scripts/https-proxy.mjs",
     "lint": "eslint .",
     "smoke:browser": "node scripts/browser-smoke.mjs",
+    "smoke:accounts": "node scripts/browser-accounts-smoke.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13"
   },
   "dependencies": {
     "fast-xml-parser": "5.11.1",

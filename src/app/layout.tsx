@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from "next";
-import Link from "next/link";
 import { Brand } from "@/components/brand";
-import { Icon } from "@/components/icons";
+import { AccountNavigation, AccountProvider } from "@/components/account-provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -25,20 +24,12 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en">
       <body>
+        <AccountProvider>
         <div className="site-shell">
           <header className="site-header">
             <div className="header-inner">
               <Brand />
-              <nav className="header-nav" aria-label="Primary navigation">
-                <Link href="/">
-                  <Icon name="search" size={17} />
-                  Browse tags
-                </Link>
-                <a href="https://www.barbershoptags.com" rel="noreferrer" target="_blank">
-                  Source library
-                  <Icon name="external" size={15} />
-                </a>
-              </nav>
+              <AccountNavigation />
             </div>
           </header>
           <main>{children}</main>
@@ -50,9 +41,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               </a>
               .
             </p>
-            <p>Built for one more run-through.</p>
           </footer>
         </div>
+        </AccountProvider>
       </body>
     </html>
   );
