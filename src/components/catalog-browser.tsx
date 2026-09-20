@@ -2,13 +2,11 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Icon } from "@/components/icons";
 import { formatCount } from "@/lib/format";
-import { isCatalogSort } from "@/lib/search";
+import { catalogRequestUrl, readCatalogQuery } from "@/lib/catalog-query";
 import type { CatalogListResponse, TagSummary } from "@/lib/types";
-
-const PAGE_SIZE = 36;
 
 function updateSearch(values: Record<string, string>) {
   const url = new URL(window.location.href);
@@ -75,7 +73,7 @@ function CatalogSkeleton() {
   );
 }
 
-export function CatalogBrowser() {
+export function CatalogBrowser({ initialResult, initialError = "" }: { initialResult?: { key: string; query: string; data: CatalogListResponse }; initialError?: string }) {
   const parameters = useSearchParams();
   const urlInput = parameters.get("q") ?? "";
   // Input changes must be synchronous to preserve the caret; Next updates the
@@ -86,35 +84,21 @@ export function CatalogBrowser() {
     setLastUrlInput(urlInput);
     setInput(urlInput);
   }
-  const query = urlInput.trim();
-  const style = parameters.get("style") ?? "";
-  const requestedSort = parameters.get("sort") ?? "relevance";
-  const sort = isCatalogSort(requestedSort) ? requestedSort : "relevance";
-  const requestedPage = Number(parameters.get("page") ?? 1);
-  const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+  const { query, style, sort, page } = readCatalogQuery(parameters);
   const [retry, setRetry] = useState(0);
-  const requestUrl = useMemo(() => {
-    const parameters = new URLSearchParams({
-      page: String(page),
-      limit: String(PAGE_SIZE),
-      sort,
-    });
-    if (query) parameters.set("q", query);
-    if (style) parameters.set("style", style);
-    parameters.set("attempt", String(retry));
-    return `/api/tags?${parameters}`;
-  }, [page, query, retry, sort, style]);
+  const requestUrl = useMemo(() => catalogRequestUrl({ query, style, sort, page }, retry), [page, query, retry, sort, style]);
   const [requestState, setRequestState] = useState<{
     key: string;
     data: CatalogListResponse | null;
     query: string;
     error: string;
-  }>({ key: "", data: null, query: "", error: "" });
+  }>({ key: initialResult?.key ?? (initialError ? requestUrl : ""), data: initialResult?.data ?? null, query: initialResult?.query ?? query, error: initialError });
   const data = requestState.data;
   const loading = requestState.key !== requestUrl;
   const error = requestState.key === requestUrl ? requestState.error : "";
 
   useEffect(() => {
+    if (requestState.key === requestUrl && requestState.data) return;
     const controller = new AbortController();
     // Debounce requests, while saving the URL immediately even if a tag is opened
     // before the debounce finishes. Restoring a URL must not reset its page.
@@ -141,7 +125,7 @@ export function CatalogBrowser() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [requestUrl, query]);
+  }, [requestUrl, query, requestState.key, requestState.data]);
 
   const restoredRequest = useRef("");
   useLayoutEffect(() => {
@@ -174,16 +158,31 @@ export function CatalogBrowser() {
     updateSearch({ sort: nextSort === "relevance" ? "" : nextSort, page: "" });
   }
 
+  function pageHref(nextPage: number) {
+    const next = new URLSearchParams(parameters.toString());
+    if (nextPage > 1) next.set("page", String(nextPage));
+    else next.delete("page");
+    return next.size ? `/?${next}` : "/";
+  }
+
+  function changePage(event: MouseEvent<HTMLAnchorElement>, nextPage: number, disabled: boolean) {
+    if (disabled) { event.preventDefault(); return; }
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    updateSearch({ page: nextPage > 1 ? String(nextPage) : "" });
+  }
+
   return (
     <>
       <h1 className="sr-only">Browse tags</h1>
 
       <section className="catalog-section" aria-labelledby="catalog-heading">
-        <div className="search-panel">
+        <form className="search-panel" action="/" method="get" onSubmit={(event) => { event.preventDefault(); updateInput(input); }}>
           <label className="search-field">
             <span className="sr-only">Search tags, arrangers, or versions</span>
             <Icon name="search" size={23} />
             <input
+              name="q"
               autoComplete="off"
               onChange={(event) => updateInput(event.target.value)}
               placeholder="Search a title, arranger, or version…"
@@ -197,14 +196,14 @@ export function CatalogBrowser() {
           <div className="catalog-filters">
             <label>
               <span>Voicing</span>
-              <select onChange={(event) => updateStyle(event.target.value)} value={style}>
+              <select name="style" onChange={(event) => updateStyle(event.target.value)} value={style}>
                 <option value="">All styles</option>
                 {data?.styles.map((item) => <option key={item} value={item}>{item}</option>)}
               </select>
             </label>
             <label>
               <span>Sort</span>
-              <select onChange={(event) => updateSort(event.target.value)} value={sort}>
+              <select name="sort" onChange={(event) => updateSort(event.target.value)} value={sort}>
                 <option value="relevance">Best match</option>
                 <option value="title">Title A–Z</option>
                 <option value="rating">Highest rated</option>
@@ -213,7 +212,8 @@ export function CatalogBrowser() {
               </select>
             </label>
           </div>
-        </div>
+          <noscript><button className="button button-secondary" type="submit">Search</button></noscript>
+        </form>
 
         <div className="catalog-heading-row">
           <div>
@@ -236,23 +236,19 @@ export function CatalogBrowser() {
               {data.items.map((tag, index) => <TagCard index={index} key={tag.id} tag={tag} />)}
             </div>
             <nav className="pagination" aria-label="Catalog pages">
-              <button
-                className="button button-secondary"
-                disabled={page <= 1 || loading}
-                onClick={() => updateSearch({ page: page > 2 ? String(page - 1) : "" })}
-                type="button"
-              >
+              <a className="button button-secondary" rel="prev" role="link"
+                href={page > 1 ? pageHref(page - 1) : undefined}
+                aria-disabled={page <= 1 || loading} tabIndex={page <= 1 || loading ? -1 : undefined}
+                onClick={(event) => changePage(event, page - 1, page <= 1 || loading)}>
                 <Icon name="chevron-left" size={18} /> Previous
-              </button>
+              </a>
               <span>Page {page} of {totalPages}</span>
-              <button
-                className="button button-secondary"
-                disabled={page >= totalPages || loading}
-                onClick={() => updateSearch({ page: String(Math.min(totalPages, page + 1)) })}
-                type="button"
-              >
+              <a className="button button-secondary" rel="next" role="link"
+                href={page < totalPages ? pageHref(page + 1) : undefined}
+                aria-disabled={page >= totalPages || loading} tabIndex={page >= totalPages || loading ? -1 : undefined}
+                onClick={(event) => changePage(event, page + 1, page >= totalPages || loading)}>
                 Next <Icon name="chevron-right" size={18} />
-              </button>
+              </a>
             </nav>
           </>
         ) : (

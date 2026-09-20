@@ -215,6 +215,8 @@ main {
   gap: 10px;
 }
 
+.pagination a[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+
 /* Catalog */
 
 .workspace-hero h1,

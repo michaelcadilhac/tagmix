@@ -89,7 +89,9 @@ TAGMIX_TEST_URL=http://localhost:3000 npm run smoke:browser
 
 The media smoke test creates a test account unless `TAGMIX_TEST_EMAIL` and `TAGMIX_TEST_PASSWORD` supply existing test credentials. Use a disposable account database when running it.
 
-After a build, `npm run smoke:accounts` starts its own production server with a temporary SQLite database and fixture catalog. It checks signup, silent mark migration, folder ordering and sharing, marks after reload, history, account isolation, and 360 px / desktop layouts in Chromium, then removes its test data. Score and audio responses are browser fixtures in this suite; use `smoke:browser` for real media processing.
+After a build, `npm run smoke:accounts` starts its own production server with a temporary SQLite database and fixture catalog. It checks public HTML and browsing without JavaScript, signup, silent mark migration, folder ordering and sharing, marks after reload, history, account isolation, and 360 px / desktop layouts in Chromium, then removes its test data. Score and audio responses are browser fixtures in this suite; use `smoke:browser` for real media processing.
+
+Catalog searches (for example `/?q=Old+Kentucky+Home`) and tag pages include results and tag details in their initial HTML, so browsers and search tools can read them without running JavaScript. Search forms and pagination links also work without JavaScript. `robots.txt` allows public catalog crawling and excludes account, folder, history, and shared-folder routes; it does not replace authentication or change who can open a shared link.
 
 The principal runtime endpoints are:
 

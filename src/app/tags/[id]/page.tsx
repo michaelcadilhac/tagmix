@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { TagWorkspace } from "@/components/tag-workspace";
 import { getTag } from "@/lib/catalog";
 import { pitchFromUrl } from "@/lib/pitch";
@@ -20,5 +21,10 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 export default async function TagPage({ params, searchParams }: PageProps) {
   const { id } = await params;
   const initialPitch = pitchFromUrl((await searchParams).pitch);
-  return <TagWorkspace key={`${id}:${initialPitch ?? "device"}`} tagId={id} initialPitch={initialPitch} />;
+  if (!/^\d+$/.test(id) || !Number.isSafeInteger(Number(id)) || Number(id) <= 0) notFound();
+  let tag;
+  try { tag = await getTag(Number(id)); }
+  catch { return <TagWorkspace tagId={id} initialPitch={initialPitch} initialError="The tag could not be loaded." />; }
+  if (!tag) notFound();
+  return <TagWorkspace key={`${id}:${initialPitch ?? "device"}`} tagId={id} initialPitch={initialPitch} initialTag={tag} />;
 }

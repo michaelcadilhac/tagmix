@@ -167,6 +167,13 @@ async function navigate(path) {
   await devtools.send("Page.navigate", { url: `${baseUrl}${path}` });
   await devtools.waitFor('document.readyState === "complete"');
 }
+async function reload() {
+  // SSR results can already satisfy a DOM assertion in the old document.
+  // Wait for the new document before inspecting or interacting with it.
+  const timeOrigin = await devtools.evaluate('performance.timeOrigin');
+  await devtools.send("Page.reload");
+  await devtools.waitFor(`performance.timeOrigin !== ${timeOrigin} && document.readyState === "complete"`);
+}
 async function fill(selector, value) {
   await devtools.evaluate(`(() => {
     const element = document.querySelector(${JSON.stringify(selector)});
@@ -281,6 +288,32 @@ try {
   await devtools.send("Emulation.setFocusEmulationEnabled", { enabled: true });
   await devtools.send("Browser.grantPermissions", { origin: baseUrl, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
   await devtools.send("Fetch.enable", { patterns: [{ urlPattern: "*/api/tags*" }, { urlPattern: "*/api/account/folders/*" }, { urlPattern: "*/api/account/folders?*" }] });
+  for (const userAgent of ["Mozilla/5.0", "ChatGPT-User/1.0", "OAI-SearchBot/1.4"]) {
+    const response = await fetch(`${baseUrl}/?q=First+rehearsal+tag`, { headers: { "User-Agent": userAgent } });
+    const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
+    assert(response.ok && /class="tag-card"[^>]*href="\/tags\/37"|href="\/tags\/37"[^>]*class="tag-card"/.test(html), `Initial HTML is missing tag links for ${userAgent}`);
+    assert(html.includes('1 match') && !html.includes('href="/tags/1482"') && !html.includes('Loading the library'), `Server search results are wrong for ${userAgent}`);
+    const tagResponse = await fetch(`${baseUrl}/tags/37`, { headers: { "User-Agent": userAgent } });
+    const tagHtml = (await tagResponse.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
+    assert(tagResponse.ok && tagHtml.includes('<h1>First rehearsal tag</h1>') && tagHtml.includes('C Major') && tagHtml.includes('View original tag page'), `Initial tag HTML is incomplete for ${userAgent}`);
+  }
+  const robots = await (await fetch(`${baseUrl}/robots.txt`)).text();
+  assert(robots.includes('Allow: /') && robots.includes('Disallow: /shared/') && robots.includes('Disallow: /api/account/'), "Public crawler policy is missing or exposes private routes");
+  assert((await fetch(`${baseUrl}/tags/99999999`)).status === 404, "Unknown tag should return an HTTP 404");
+  await devtools.send("Emulation.setScriptExecutionDisabled", { value: true });
+  await navigate("/?q=Old+Kentucky+Home");
+  await devtools.waitFor('document.querySelectorAll(".tag-card").length === 36');
+  assert(await devtools.evaluate('document.querySelector(".tag-card").getBoundingClientRect().height > 0 && document.querySelector("#catalog-heading").textContent.includes("80 matches")'), "Catalog is hidden without JavaScript");
+  await click('.pagination [rel=next]');
+  await devtools.waitFor('location.search.includes("page=2") && document.querySelector(".pagination span")?.textContent === "Page 2 of 3"');
+  await fill('input[type=search]', "First rehearsal tag");
+  await devtools.evaluate('document.querySelector(".search-panel").requestSubmit()');
+  await devtools.waitFor('document.querySelector("#catalog-heading")?.textContent.includes("1 match")');
+  await click('.tag-card');
+  await devtools.waitFor('location.pathname === "/tags/37" && document.querySelector("h1")?.textContent === "First rehearsal tag"');
+  assert(await devtools.evaluate('document.querySelector(".workspace-heading").getBoundingClientRect().height > 0'), "Tag details are hidden without JavaScript");
+  await devtools.send("Emulation.setScriptExecutionDisabled", { value: false });
+  checks.push("Ordinary and OpenAI user agents receive searchable tag HTML; catalog search, pagination, and tag links work with JavaScript disabled");
   const legacyResponse = await fetch(`${baseUrl}/shared/${legacyEditToken}`, { redirect: "manual" });
   // Next.js may already be streaming the layout, in which case the permanent
   // redirect is encoded in the page rather than the initial HTTP headers.
@@ -314,7 +347,7 @@ try {
     holdCatalogReads = false;
     for (const requestId of heldCatalogReads.splice(0)) await devtools.send("Fetch.continueRequest", { requestId }).catch(error => { if (!error.message.includes("Invalid InterceptionId")) throw error; });
     await devtools.waitFor('document.querySelector("#catalog-heading")?.textContent.includes("80 matches") && !!document.querySelector(".tag-grid[aria-busy=false]")');
-    await click('.pagination button:last-child');
+    await click('.pagination [rel=next]');
     await devtools.waitFor('document.querySelector(".pagination span")?.textContent === "Page 2 of 3" && !!document.querySelector(".tag-grid[aria-busy=false]")');
     assert(await devtools.evaluate('history.length') === historyLength, "Filters added extra Back entries");
     const snapshot = 'JSON.stringify({ search: location.search, input: document.querySelector("input[type=search]")?.value, filters: [...document.querySelectorAll(".catalog-filters select")].map(el => el.value), page: document.querySelector(".pagination span")?.textContent, tags: [...document.querySelectorAll(".tag-card h3")].map(el => el.textContent) })';
@@ -327,9 +360,9 @@ try {
     await devtools.waitFor('!!document.querySelector(".workspace-heading")');
     holdCatalogReads = true;
     await devtools.evaluate('history.back()');
-    await devtools.waitFor('location.pathname === "/" && !document.querySelector(".tag-grid[aria-busy=false]")');
+    await devtools.waitFor('location.pathname === "/"');
     await wait(600);
-    assert(heldCatalogReads.length > 0, "Back did not wait for the delayed catalog");
+    assert(heldCatalogReads.length > 0 || await devtools.evaluate('!!document.querySelector(".tag-grid[aria-busy=false]")'), "Back has neither server results nor a pending catalog request");
     holdCatalogReads = false;
     for (const requestId of heldCatalogReads.splice(0)) await devtools.send("Fetch.continueRequest", { requestId });
     await devtools.waitFor('location.pathname === "/" && !!document.querySelector(".tag-grid[aria-busy=false]")');
@@ -342,7 +375,7 @@ try {
     await devtools.evaluate('history.back()');
     await devtools.waitFor('location.pathname === "/" && !!document.querySelector(".tag-grid[aria-busy=false]")');
     assert(Math.abs(await devtools.evaluate('window.scrollY') - expectedScroll) < 3, "Repeated Back lost scroll position");
-    await devtools.send("Page.reload");
+    await reload();
     await devtools.waitFor('!!document.querySelector(".tag-grid[aria-busy=false]")');
     assert(Math.abs(await devtools.evaluate('window.scrollY') - expectedScroll) < 3, "Reload lost the saved result position");
     assert(await devtools.evaluate(snapshot) === expected, "Reload lost catalog state");

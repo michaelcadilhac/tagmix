@@ -25,7 +25,7 @@ function WorkspaceLoading() {
   );
 }
 
-export function TagWorkspace({ tagId, initialPitch }: { tagId: string; initialPitch?: number }) {
+export function TagWorkspace({ tagId, initialPitch, initialTag = null, initialError = "" }: { tagId: string; initialPitch?: number; initialTag?: Tag | null; initialError?: string }) {
   const [pitchSemitones, setPitchSemitones] = useState(initialPitch ?? 0);
   const [retry, setRetry] = useState(0);
   const requestUrl = useMemo(
@@ -33,15 +33,16 @@ export function TagWorkspace({ tagId, initialPitch }: { tagId: string; initialPi
     [retry, tagId],
   );
   const [requestState, setRequestState] = useState<{ key: string; tag: Tag | null; error: string }>({
-    key: "",
-    tag: null,
-    error: "",
+    key: initialTag || initialError ? requestUrl : "",
+    tag: initialTag,
+    error: initialError,
   });
   const tag = requestState.tag;
   const loading = requestState.key !== requestUrl;
   const error = requestState.key === requestUrl ? requestState.error : "";
 
   useEffect(() => {
+    if (requestState.key === requestUrl && requestState.tag) return;
     const controller = new AbortController();
     fetch(requestUrl, { signal: controller.signal })
       .then(async (response) => {
@@ -59,7 +60,7 @@ export function TagWorkspace({ tagId, initialPitch }: { tagId: string; initialPi
         }
       });
     return () => controller.abort();
-  }, [requestUrl]);
+  }, [requestUrl, requestState.key, requestState.tag]);
 
   if (loading && !tag) return <WorkspaceLoading />;
 
