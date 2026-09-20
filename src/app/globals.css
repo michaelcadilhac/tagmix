@@ -2565,6 +2565,13 @@ button.text-link { padding: 8px 0; border: 0; background: transparent; }
 .save-tag-dropdown [role="menuitem"]:disabled { opacity: 1; color: var(--ink-soft); }
 .save-tag-dropdown [role="menuitem"] svg { flex-shrink: 0; }
 .save-folder-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.saved-folder-option { display: flex; align-items: center; min-width: 0; }
+.saved-folder-label { display: flex; align-items: center; flex: 1; min-width: 0; gap: 8px; padding: 9px 0 9px 10px; font-size: 0.9rem; }
+.saved-folder-label > svg { flex-shrink: 0; color: var(--green); }
+.saved-folder-label .form-hint { display: block; }
+.save-tag-dropdown .saved-folder-action { flex: 0 0 44px; width: 44px; justify-content: center; padding: 9px; color: var(--green); }
+.save-tag-dropdown .remove-folder-tag:not(:disabled):hover { color: #9b3023; background: #fff0ec; }
+.save-tag-dropdown .saved-folder-action:disabled { opacity: 0.45; }
 .save-tag-dropdown .new-folder-option { margin-top: 4px; border-top: 1px solid var(--line); border-radius: 0 0 6px 6px; }
 .save-tag-form { display: grid; gap: 12px; margin: 10px 4px 4px; padding-top: 12px; border-top: 1px solid var(--line); }
 .save-tag-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 6px; }
@@ -2589,10 +2596,7 @@ button.text-link { padding: 8px 0; border: 0; background: transparent; }
 .menu-toggle { display: none; }
 .header-nav a { min-height: 44px; }
 .header-nav a[aria-current="page"] { color: var(--green); text-decoration: underline; text-underline-offset: 6px; }
-.folder-membership, .folder-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-.folder-membership { min-width: 0; margin: 12px 0 0 54px; color: var(--ink-soft); font-size: 0.85rem; }
-.folder-membership a { display: inline-flex; align-items: center; min-height: 44px; max-width: 100%; padding: 6px 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--green); background: var(--surface-cool); overflow-wrap: anywhere; }
-.folder-membership a:hover { border-color: var(--green); }
+.folder-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 
 @media (max-width: 1120px) {
   .tag-save-control { margin-top: 2px; }

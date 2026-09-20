@@ -7,6 +7,7 @@ export type IconName =
   | "chevron-left"
   | "chevron-right"
   | "external"
+  | "eye"
   | "headphones"
   | "marker"
   | "minus"
@@ -21,6 +22,7 @@ export type IconName =
   | "trash"
   | "volume"
   | "volume-off"
+  | "x"
   | "zoom-in"
   | "zoom-out";
 
@@ -31,6 +33,7 @@ const paths: Record<IconName, React.ReactNode> = {
   "chevron-left": <path d="m15 18-6-6 6-6" />,
   "chevron-right": <path d="m9 18 6-6-6-6" />,
   external: <><path d="M14 5h5v5" /><path d="M10 14 19 5" /><path d="M19 13v6H5V5h6" /></>,
+  eye: <><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></>,
   headphones: <><path d="M4 14v-2a8 8 0 0 1 16 0v2" /><path d="M18 19h-1a2 2 0 0 1-2-2v-3h5v3a2 2 0 0 1-2 2ZM6 19H5a2 2 0 0 1-2-2v-3h5v3a2 2 0 0 1-2 2Z" /></>,
   marker: <><path d="M12 21s6-5.2 6-11a6 6 0 1 0-12 0c0 5.8 6 11 6 11Z" /><circle cx="12" cy="10" r="2" /></>,
   minus: <path d="M5 12h14" />,
@@ -45,6 +48,7 @@ const paths: Record<IconName, React.ReactNode> = {
   trash: <><path d="M5 7h14" /><path d="m9 7 .5-2h5l.5 2" /><path d="m7 7 1 13h8l1-13" /><path d="M10 11v5M14 11v5" /></>,
   volume: <><path d="M11 5 6 9H3v6h3l5 4V5Z" /><path d="M15 9a4 4 0 0 1 0 6" /><path d="M18 6a8 8 0 0 1 0 12" /></>,
   "volume-off": <><path d="M11 5 6 9H3v6h3l5 4V5Z" /><path d="m16 10 5 5M21 10l-5 5" /></>,
+  x: <path d="m6 6 12 12M18 6 6 18" />,
   "zoom-in": <><circle cx="10" cy="10" r="6" /><path d="m15 15 5 5M10 7v6M7 10h6" /></>,
   "zoom-out": <><circle cx="10" cy="10" r="6" /><path d="m15 15 5 5M7 10h6" /></>,
 };

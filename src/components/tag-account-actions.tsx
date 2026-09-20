@@ -20,6 +20,8 @@ export function TagAccountActions({ tagId, pitchSemitones, children }: { tagId: 
   }
   const membershipData = resource.data ?? (resource.loading && membership.userId === user?.id ? membership.data : null);
   const savedFolders = membershipData?.folders.filter((folder) => membershipData.savedFolderIds.includes(folder.id)) ?? [];
+  const savedFolderIds = new Set(resource.data?.savedFolderIds);
+  const folderChoices = [...(resource.data?.folders ?? [])].sort((a, b) => Number(savedFolderIds.has(b.id)) - Number(savedFolderIds.has(a.id)));
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -110,6 +112,20 @@ export function TagAccountActions({ tagId, pitchSemitones, children }: { tagId: 
     finally { saving.current = false; setBusy(false); }
   }
 
+  async function remove(folderId: string) {
+    if (!user || saving.current) return;
+    saving.current = true;
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const removed = await accountRequest<{ folder: SavedFolder }>(`folders/${folderId}/tags/${tagId}`, { userId: user.id, method: "DELETE" });
+      setMessage(`Removed from “${removed.folder.name}”.`);
+      if (dropdownRef.current && (document.activeElement === document.body || controlRef.current?.contains(document.activeElement))) close();
+      else setOpen(false);
+      resource.reload();
+    } catch (failure) { setError(errorMessage(failure)); resource.reload(); }
+    finally { saving.current = false; setBusy(false); }
+  }
+
   function createFolder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void save("", String(new FormData(event.currentTarget).get("name") ?? ""));
@@ -130,11 +146,15 @@ export function TagAccountActions({ tagId, pitchSemitones, children }: { tagId: 
           {user && resource.loading && <p className="form-hint" role="status">Loading folders…</p>}
           <div role="menu" id={`save-tag-${tagId}`} aria-labelledby={`save-tag-heading-${tagId}`} tabIndex={-1} onKeyDown={navigate}>
             {!user ? <Link role="menuitem" tabIndex={-1} href={`/account?next=/tags/${tagId}`}>Sign in to save a tag</Link> : <>
-              {resource.data?.folders.map((folder) => {
-                const saved = resource.data?.savedFolderIds.includes(folder.id);
-                return <button className="save-folder-option" role="menuitem" tabIndex={-1} type="button" key={folder.id} data-folder-id={folder.id} disabled={busy || saved || folder.access === "view"} onClick={() => void save(folder.id)}>
+              {folderChoices.map((folder) => {
+                const saved = savedFolderIds.has(folder.id);
+                if (saved) return <div className="saved-folder-option" role="group" aria-label={`${folder.name} — already saved`} key={folder.id} data-folder-id={folder.id}>
+                  <span className="saved-folder-label"><Icon name="check" size={16} /><span className="save-folder-name">{folder.name}{folder.access === "view" && <span className="form-hint">Read-only</span>}</span></span>
+                  <Link className="saved-folder-action" role="menuitem" tabIndex={-1} href={`/folders/${folder.id}`} aria-label={`View folder “${folder.name}”`} title="View folder"><Icon name="eye" size={18} /></Link>
+                  <button className="saved-folder-action remove-folder-tag" role="menuitem" tabIndex={-1} type="button" disabled={busy || folder.access === "view"} onClick={() => void remove(folder.id)} aria-label={`Remove tag from “${folder.name}”`} title={folder.access === "view" ? "Read-only folder" : "Remove tag from folder"}><Icon name="x" size={18} /></button>
+                </div>;
+                return <button className="save-folder-option" role="menuitem" tabIndex={-1} type="button" key={folder.id} data-folder-id={folder.id} disabled={busy || folder.access === "view"} onClick={() => void save(folder.id)}>
                   <span className="save-folder-name">{folder.name}</span>
-                  {saved && <><Icon name="check" size={16} /><span className="sr-only">Already saved</span></>}
                   {folder.access === "view" && <span className="form-hint">Read-only</span>}
                 </button>;
               })}
@@ -148,7 +168,7 @@ export function TagAccountActions({ tagId, pitchSemitones, children }: { tagId: 
               <button className="button button-primary" disabled={busy || resource.loading}>{busy ? "Saving…" : "Create & save"}</button>
             </div>
           </form>}
-          {busy && !creating && <p className="form-hint" role="status">Saving…</p>}
+          {busy && !creating && <p className="form-hint" role="status">Updating…</p>}
           {user && resource.error && <p className="form-error" role="alert">{resource.error} <button className="text-link" type="button" onClick={resource.reload}>Retry</button></p>}
           {error && <p className="form-error" role="alert">{error}</p>}
         </div>}
@@ -156,7 +176,6 @@ export function TagAccountActions({ tagId, pitchSemitones, children }: { tagId: 
       {children}
     </div>
     {!loading && user && <>
-      {savedFolders.length > 0 && <div className="folder-membership"><span>Saved in</span>{savedFolders.map((folder) => <Link key={folder.id} href={`/folders/${folder.id}`}>{folder.name}</Link>)}</div>}
       {!open && resource.error && <p className="form-error" role="alert">{resource.error} <button className="text-link" type="button" onClick={resource.reload}>Retry</button></p>}
       {historyError && <p className="form-error" role="alert">Could not update history: {historyError} <button className="text-link" onClick={() => setHistoryAttempt((value) => value + 1)}>Retry</button></p>}
     </>}
