@@ -4,7 +4,7 @@ services:
     init: true
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${TAGMIX_BIND_ADDRESS:-0.0.0.0}:3000:3000"
     environment:
       TAGMIX_DATA_DIR: /data
       TAGMIX_ACCOUNT_DIR: /accounts

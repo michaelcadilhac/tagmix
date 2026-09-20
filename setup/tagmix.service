@@ -1,0 +1,21 @@
+[Unit]
+Description=TagMix rehearsal app (Docker Compose)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/tagmix
+EnvironmentFile=/etc/tagmix/tagmix.env
+Environment=TAGMIX_BIND_ADDRESS=127.0.0.1
+# Build the image before starting this service; see setup/README.md.
+ExecStart=/usr/bin/docker compose --project-name tagmix --file docker-compose.yml up --detach --no-build --wait --wait-timeout 120
+ExecStop=/usr/bin/docker compose --project-name tagmix --file docker-compose.yml stop --timeout 30
+TimeoutStartSec=180
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

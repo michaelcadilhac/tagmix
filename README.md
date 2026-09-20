@@ -36,6 +36,9 @@ The separate **`tagmix-accounts` volume contains durable account data**: account
 
 For a reverse proxy, set `TAGMIX_APP_ORIGIN` to the public origin (for example `https://tags.example.com`). This enables Secure session cookies over HTTPS and validates account mutations against that origin. Without an override, direct access uses the request's Host header, so localhost and LAN addresses work even when the server listens on `0.0.0.0`. Forwarded host headers do not override this check. Local plain-HTTP use remains supported. SQLite is intended for a single app deployment with a local persistent volume.
 
+For a Linux server, [setup/README.md](setup/README.md) provides nginx HTTPS
+configuration, a systemd service for Docker Compose, and certificate setup steps.
+
 ## Accounts and folders
 
 Use **Sign in → Create an account** to register with an email address and a password of 12–128 characters. There is no verification email or email-based password recovery. Passwords are salted and hashed with scrypt; sessions expire after 30 days and are revoked when signing out. Authentication attempts are rate-limited in the database.
