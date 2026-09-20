@@ -1,8 +1,10 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { Icon } from "@/components/icons";
+import { PitchControl } from "@/components/pitch-control";
+import { isPitchSemitones } from "@/lib/pitch";
 import {
   PITCH_CLASSES,
   frequencyForMidi,
@@ -14,7 +16,6 @@ import {
 } from "@/lib/notes";
 
 type Instrument = "piano" | "pitch-pipe";
-type PlayedNote = { instrument: Instrument; midi: number };
 type Tone = { envelope: GainNode; instrument: Instrument; oscillators: OscillatorNode[] };
 type ToneEngine = {
   context: AudioContext;
@@ -100,7 +101,6 @@ function useTonePlayer() {
   const engineRef = useRef<ToneEngine | null>(null);
   const activeTimersRef = useRef<Map<string, number>>(new Map());
   const [activeNotes, setActiveNotes] = useState<Set<string>>(() => new Set());
-  const [playedNote, setPlayedNote] = useState<PlayedNote | null>(null);
   const [error, setError] = useState("");
 
   const getEngine = useCallback((): ToneEngine => {
@@ -126,7 +126,6 @@ function useTonePlayer() {
   const play = useCallback((midi: number, instrument: Instrument) => {
     const activeKey = `${instrument}:${midi}`;
     setError("");
-    setPlayedNote({ instrument, midi });
     setActiveNotes((current) => new Set(current).add(activeKey));
     const previousTimer = activeTimersRef.current.get(activeKey);
     if (previousTimer !== undefined) window.clearTimeout(previousTimer);
@@ -166,7 +165,7 @@ function useTonePlayer() {
     engineRef.current = null;
   }, []);
 
-  return { activeNotes, error, play, playedNote };
+  return { activeNotes, error, play };
 }
 
 const ReferenceToneContext = createContext<ReturnType<typeof useTonePlayer> | null>(null);
@@ -197,7 +196,8 @@ export function KeyPitchPipe({ musicalKey, pitchSemitones }: { musicalKey: strin
   </>;
 }
 
-function PitchPipe({ activeNotes, onPlay }: {
+function PitchPipe({ activeNotes, onPlay, pitchSemitones }: {
+  pitchSemitones: number;
   activeNotes: ReadonlySet<string>;
   onPlay: (midi: number, instrument: Instrument) => void;
 }) {
@@ -218,7 +218,7 @@ function PitchPipe({ activeNotes, onPlay }: {
       </header>
       <div className="pitch-pipe-notes" role="group" aria-label={`Pitch pipe notes in octave ${octave}`}>
         {PITCH_CLASSES.map((pitch) => {
-          const midi = midiForPitch(octave, pitch.semitone);
+          const midi = midiForPitch(octave, pitch.semitone) + pitchSemitones;
           const active = activeNotes.has(`pitch-pipe:${midi}`);
           return (
             <button
@@ -226,7 +226,7 @@ function PitchPipe({ activeNotes, onPlay }: {
               className={active ? "is-active" : ""}
               key={pitch.semitone}
               onClick={() => onPlay(midi, "pitch-pipe")}
-              title={`${pitch.label}${octave} · ${frequencyForMidi(midi).toFixed(1)} Hz`}
+              title={`${noteLabel(midi)} · ${frequencyForMidi(midi).toFixed(1)} Hz`}
               type="button"
             >
               <strong>{pitch.shortLabel}</strong>
@@ -239,11 +239,23 @@ function PitchPipe({ activeNotes, onPlay }: {
   );
 }
 
-function Piano({ activeNotes, onPlay }: {
+function Piano({ activeNotes, onPlay, pitchSemitones }: {
+  pitchSemitones: number;
   activeNotes: ReadonlySet<string>;
   onPlay: (midi: number, instrument: Instrument) => void;
 }) {
   const keyboardStyle = { "--piano-white-keys": PIANO_WHITE_KEYS } as CSSProperties;
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [canScroll, setCanScroll] = useState(false);
+
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const observer = new ResizeObserver(() => setCanScroll(scroller.scrollWidth > scroller.clientWidth));
+    observer.observe(scroller);
+    if (scroller.firstElementChild) observer.observe(scroller.firstElementChild);
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <section className="instrument-card piano" aria-labelledby="piano-heading">
@@ -253,11 +265,12 @@ function Piano({ activeNotes, onPlay }: {
         </div>
         <span className="piano-range">C3–C6</span>
       </header>
-      <p className="instrument-description">Scroll to reach more keys.</p>
-      <div className="piano-scroll" role="group" aria-label="Piano keyboard from C3 through C6">
+      {canScroll && <p className="instrument-description">Scroll to reach more keys.</p>}
+      <div className="piano-scroll" ref={scrollRef} role="group" aria-label="Piano keyboard from C3 through C6">
         <div className="piano-keyboard" style={keyboardStyle}>
           {PIANO_KEYS.map((key) => {
-            const active = activeNotes.has(`piano:${key.midi}`);
+            const midi = key.midi + pitchSemitones;
+            const active = activeNotes.has(`piano:${midi}`);
             const keyStyle = { "--key-position": key.whiteKeysBefore } as CSSProperties;
             return (
               <button
@@ -265,13 +278,13 @@ function Piano({ activeNotes, onPlay }: {
                 className={`piano-key ${key.isBlack ? "piano-key-black" : "piano-key-white"} ${active ? "is-active" : ""}`}
                 key={key.midi}
                 onClick={(event) => {
-                  if (event.detail === 0) onPlay(key.midi, "piano");
+                  if (event.detail === 0) onPlay(midi, "piano");
                 }}
                 onPointerDown={(event) => {
-                  if (event.button === 0) onPlay(key.midi, "piano");
+                  if (event.button === 0) onPlay(midi, "piano");
                 }}
                 style={keyStyle}
-                title={`${key.label}${key.octave} · ${frequencyForMidi(key.midi).toFixed(1)} Hz`}
+                title={`${noteLabel(midi)} · ${frequencyForMidi(midi).toFixed(1)} Hz`}
                 type="button"
               >
                 <span>{key.shortLabel}{key.shortLabel === "C" ? key.octave : ""}</span>
@@ -284,47 +297,77 @@ function Piano({ activeNotes, onPlay }: {
   );
 }
 
-function ToolContents({ instrument }: { instrument?: Instrument }) {
-  const { activeNotes, error, play, playedNote } = useReferenceTone();
-  const readout = useMemo(() => {
-    if (error) return { note: "Audio unavailable", detail: error };
-    if (!playedNote) return { note: "Ready", detail: "Tap a note, or focus one and press Enter or Space." };
-    return {
-      note: noteLabel(playedNote.midi),
-      detail: `${frequencyForMidi(playedNote.midi).toFixed(1)} Hz · ${playedNote.instrument === "pitch-pipe" ? "Pitch pipe" : "Piano"}`,
-    };
-  }, [error, playedNote]);
-
+function ToolContents({ instrument, pitchSemitones }: { instrument?: Instrument; pitchSemitones: number }) {
+  const { activeNotes, error, play } = useReferenceTone();
   return (
     <div className="note-tools-content">
-      <div className={`note-readout ${error ? "has-error" : ""}`} aria-live="polite" role={error ? "alert" : "status"}>
-        <span className="note-readout-mark" aria-hidden="true">♪</span>
-        <strong>{readout.note}</strong>
-        <span>{readout.detail}</span>
-      </div>
+      {error && <p className="form-error" role="alert">{error}</p>}
       <div className="instrument-list">
-        {(!instrument || instrument === "pitch-pipe") && <PitchPipe activeNotes={activeNotes} onPlay={play} />}
-        {(!instrument || instrument === "piano") && <Piano activeNotes={activeNotes} onPlay={play} />}
+        {(!instrument || instrument === "pitch-pipe") && <PitchPipe activeNotes={activeNotes} onPlay={play} pitchSemitones={pitchSemitones} />}
+        {(!instrument || instrument === "piano") && <Piano activeNotes={activeNotes} onPlay={play} pitchSemitones={pitchSemitones} />}
       </div>
     </div>
   );
 }
 
-export function NoteTools({ collapsible = false }: { collapsible?: boolean }) {
+const SESSION_PITCH_KEY = "tagmix:tools:pitch";
+let fallbackSessionPitch: number | null = null;
+function readSessionPitch() {
+  if (fallbackSessionPitch !== null) return fallbackSessionPitch;
+  try {
+    const value = Number(sessionStorage.getItem(SESSION_PITCH_KEY));
+    return isPitchSemitones(value) ? value : 0;
+  } catch { return 0; }
+}
+function subscribeSessionPitch(update: () => void) {
+  window.addEventListener(SESSION_PITCH_KEY, update);
+  window.addEventListener("storage", update);
+  return () => {
+    window.removeEventListener(SESSION_PITCH_KEY, update);
+    window.removeEventListener("storage", update);
+  };
+}
+function changeSessionPitch(value: number) {
+  try {
+    sessionStorage.setItem(SESSION_PITCH_KEY, String(value));
+    fallbackSessionPitch = null;
+  } catch { fallbackSessionPitch = value; }
+  window.dispatchEvent(new Event(SESSION_PITCH_KEY));
+}
+function StandaloneTools() {
+  const pitchSemitones = useSyncExternalStore(subscribeSessionPitch, readSessionPitch, () => 0);
+  return <section className="note-tools note-tools-standalone" aria-labelledby="note-tools-heading">
+    <h2 className="sr-only" id="note-tools-heading">Pitch pipe & piano</h2>
+    <div className="tools-pitch-control" role="group" aria-label="Reference tools pitch">
+      <span>Pitch</span><PitchControl value={pitchSemitones} onChange={changeSessionPitch} />
+    </div>
+    <ToolContents pitchSemitones={pitchSemitones} />
+  </section>;
+}
+
+export function NoteTools({ collapsible = false, pitchSemitones = 0 }: { collapsible?: boolean; pitchSemitones?: number }) {
   const sharedPlayer = useContext(ReferenceToneContext);
-  const contents = <NoteToolsContent collapsible={collapsible} />;
+  const contents = <NoteToolsContent collapsible={collapsible} pitchSemitones={pitchSemitones} />;
   return sharedPlayer ? contents : <ReferenceToneProvider>{contents}</ReferenceToneProvider>;
 }
 
-function NoteToolsContent({ collapsible }: { collapsible: boolean }) {
+function NoteToolsContent({ collapsible, pitchSemitones }: { collapsible: boolean; pitchSemitones: number }) {
   const contentId = useId();
+  const [pitchAdjusted, setPitchAdjusted] = useState(false);
   const [activeInstrument, setActiveInstrument] = useState<Instrument | null>(null);
 
   if (collapsible) {
     return (
       <div className={`note-tools note-tools-embedded ${activeInstrument ? "is-open" : ""}`}>
         <div className="note-tools-launcher">
-          <span className="note-tools-launcher-label"><Icon name="music" size={18} /> Reference tools</span>
+          <div className="note-tools-launcher-heading">
+            <span className="note-tools-launcher-label"><Icon name="music" size={18} /> Reference tools</span>
+            <label className="tools-pitch-toggle" hidden={pitchSemitones === 0}>
+              <input type="checkbox" role="switch" disabled={pitchSemitones === 0} checked={pitchAdjusted} onChange={(event) => setPitchAdjusted(event.target.checked)} />
+              <span className="tools-pitch-switch" aria-hidden="true" />
+              <span>Pitch adjusted</span>
+            </label>
+          </div>
           <div className="note-tools-launcher-buttons" role="group" aria-label="Open a reference instrument">
             <button
               aria-controls={contentId}
@@ -348,17 +391,12 @@ function NoteToolsContent({ collapsible }: { collapsible: boolean }) {
         </div>
         {activeInstrument && (
           <div className="note-tools-embedded-content" id={contentId}>
-            <ToolContents instrument={activeInstrument} key={activeInstrument} />
+            <ToolContents instrument={activeInstrument} key={activeInstrument} pitchSemitones={pitchAdjusted ? pitchSemitones : 0} />
           </div>
         )}
       </div>
     );
   }
 
-  return (
-    <section className="note-tools note-tools-standalone" aria-labelledby="note-tools-heading">
-      <h2 className="sr-only" id="note-tools-heading">Pitch pipe & piano</h2>
-      <ToolContents />
-    </section>
-  );
+  return <StandaloneTools />;
 }

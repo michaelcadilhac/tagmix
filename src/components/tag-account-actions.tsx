@@ -22,7 +22,12 @@ export function TagAccountActions({ tagId, pitchSemitones, children }: { tagId: 
   const savedFolders = membershipData?.folders.filter((folder) => membershipData.savedFolderIds.includes(folder.id)) ?? [];
   const savedFolderIds = new Set(resource.data?.savedFolderIds);
   const folderChoices = [...(resource.data?.folders ?? [])].sort((a, b) => Number(savedFolderIds.has(b.id)) - Number(savedFolderIds.has(a.id)));
-  const [open, setOpen] = useState(false);
+  const [menuState, setMenuState] = useState<"closed" | "loading" | "open">("closed");
+  const [showSpinner, setShowSpinner] = useState(false);
+  if (menuState === "loading" && !resource.loading) {
+    setMenuState(resource.error ? "closed" : "open");
+  }
+  const open = menuState === "open";
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -35,7 +40,7 @@ export function TagAccountActions({ tagId, pitchSemitones, children }: { tagId: 
   const saving = useRef(false);
 
   useLayoutEffect(() => {
-    if (!open) return;
+    if (menuState === "closed") return;
     const dropdown = dropdownRef.current;
     dropdown?.querySelector<HTMLElement>('[role="menu"]')?.focus({ preventScroll: true });
     function position() {
@@ -47,7 +52,7 @@ export function TagAccountActions({ tagId, pitchSemitones, children }: { tagId: 
       dropdown.style.maxHeight = `${Math.max(120, window.innerHeight - bounds.top - 12)}px`;
     }
     function outside(event: PointerEvent) {
-      if (event.target instanceof Node && !controlRef.current?.contains(event.target)) setOpen(false);
+      if (event.target instanceof Node && !controlRef.current?.contains(event.target)) setMenuState("closed");
     }
     position();
     document.addEventListener("pointerdown", outside);
@@ -58,7 +63,13 @@ export function TagAccountActions({ tagId, pitchSemitones, children }: { tagId: 
       window.removeEventListener("resize", position);
       window.visualViewport?.removeEventListener("resize", position);
     };
-  }, [open]);
+  }, [menuState]);
+
+  useEffect(() => {
+    if (menuState !== "loading") return;
+    const timer = window.setTimeout(() => setShowSpinner(true), 500);
+    return () => window.clearTimeout(timer);
+  }, [menuState]);
 
   useLayoutEffect(() => {
     if (!open || resource.loading || creating) return;
@@ -75,11 +86,14 @@ export function TagAccountActions({ tagId, pitchSemitones, children }: { tagId: 
     return () => controller.abort();
   }, [tagId, user?.id, historyAttempt]);
 
-  function close() { setOpen(false); triggerRef.current?.focus({ preventScroll: true }); }
+  function close() { setMenuState("closed"); triggerRef.current?.focus({ preventScroll: true }); }
 
   function show() {
-    setOpen(true); setCreating(false); setError("");
-    if (user) resource.reload();
+    setCreating(false); setError(""); setShowSpinner(false);
+    if (user) {
+      resource.reload();
+      setMenuState("loading");
+    } else setMenuState("open");
   }
 
   function navigate(event: KeyboardEvent<HTMLDivElement>) {
@@ -105,7 +119,7 @@ export function TagAccountActions({ tagId, pitchSemitones, children }: { tagId: 
       const saved = await accountRequest<{ folder: SavedFolder }>(`folders/${folderId}/tags`, { userId: user.id, method: "POST", body: { tagId, pitchSemitones } });
       setMessage(`Saved to “${saved.folder.name}”.`);
       if (dropdownRef.current && (document.activeElement === document.body || controlRef.current?.contains(document.activeElement))) close();
-      else setOpen(false);
+      else setMenuState("closed");
       setCreating(false);
       resource.reload();
     } catch (failure) { setError(errorMessage(failure)); resource.reload(); }
@@ -120,7 +134,7 @@ export function TagAccountActions({ tagId, pitchSemitones, children }: { tagId: 
       const removed = await accountRequest<{ folder: SavedFolder }>(`folders/${folderId}/tags/${tagId}`, { userId: user.id, method: "DELETE" });
       setMessage(`Removed from “${removed.folder.name}”.`);
       if (dropdownRef.current && (document.activeElement === document.body || controlRef.current?.contains(document.activeElement))) close();
-      else setOpen(false);
+      else setMenuState("closed");
       resource.reload();
     } catch (failure) { setError(errorMessage(failure)); resource.reload(); }
     finally { saving.current = false; setBusy(false); }
@@ -134,13 +148,14 @@ export function TagAccountActions({ tagId, pitchSemitones, children }: { tagId: 
   return <div className="tag-account-actions">
     <div className="workspace-title-row">
       <div className="tag-save-control" ref={controlRef}
-        onBlur={(event) => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}
+        onBlur={(event) => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) setMenuState("closed"); }}
         onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); } }}>
-        <button ref={triggerRef} className="tag-save-button" aria-label="Save to folder" title="Save to folder" aria-haspopup="menu" aria-expanded={open} aria-controls={`save-tag-${tagId}`} disabled={loading}
-          onClick={() => { if (open) close(); else show(); }}
-          onKeyDown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); if (!open) show(); else dropdownRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus(); } }} type="button">
-          <Icon name="bookmark" size={22} fill={savedFolders.length ? "currentColor" : "none"} />
+        <button ref={triggerRef} className="tag-save-button" aria-label="Save to folder" title="Save to folder" aria-haspopup="menu" aria-expanded={open} aria-busy={menuState === "loading"} aria-controls={`save-tag-${tagId}`} disabled={loading}
+          onClick={() => { if (menuState !== "closed") close(); else show(); }}
+          onKeyDown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); if (menuState === "closed") show(); else if (open) dropdownRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus(); } }} type="button">
+          {menuState === "loading" && showSpinner ? <span className="bookmark-spinner" aria-hidden="true" /> : <Icon name="bookmark" size={22} fill={savedFolders.length ? "currentColor" : "none"} />}
         </button>
+        {menuState === "loading" && <span className="sr-only" role="status">Loading folders…</span>}
         {open && <div className="save-tag-dropdown" ref={dropdownRef}>
           <p className="save-tag-heading" id={`save-tag-heading-${tagId}`}>Save to folder</p>
           {user && resource.loading && <p className="form-hint" role="status">Loading folders…</p>}
@@ -176,7 +191,7 @@ export function TagAccountActions({ tagId, pitchSemitones, children }: { tagId: 
       {children}
     </div>
     {!loading && user && <>
-      {!open && resource.error && <p className="form-error" role="alert">{resource.error} <button className="text-link" type="button" onClick={resource.reload}>Retry</button></p>}
+      {!open && resource.error && <p className="form-error" role="alert">{resource.error} <button className="text-link" type="button" onClick={show}>Retry</button></p>}
       {historyError && <p className="form-error" role="alert">Could not update history: {historyError} <button className="text-link" onClick={() => setHistoryAttempt((value) => value + 1)}>Retry</button></p>}
     </>}
     {message && <p className="sr-only" role="status">{message}</p>}

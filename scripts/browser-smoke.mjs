@@ -199,7 +199,7 @@ try {
   await devtools.evaluate(`document.querySelector(".note-tools-launcher-buttons button:last-child").click()`, true);
   await devtools.waitFor(`document.querySelectorAll(".note-tools-embedded .pitch-pipe-notes button").length === 12`);
   await devtools.evaluate(`document.querySelector('.note-tools-embedded [aria-label="Play C 4 on the pitch pipe"]').click()`, true);
-  await devtools.waitFor(`document.querySelector(".note-tools-embedded .note-readout strong")?.textContent === "C4"`);
+  await devtools.waitFor(`document.querySelector(".note-tools-embedded .pitch-pipe-notes button.is-active")?.getAttribute("aria-label") === "Play C 4 on the pitch pipe"`);
   await devtools.evaluate(`document.querySelector(".note-tools-launcher-buttons button:first-child").click()`, true);
   await devtools.waitFor(`document.querySelectorAll(".note-tools-embedded .piano-key").length === 37`);
   await devtools.evaluate(`(() => {
@@ -224,7 +224,7 @@ try {
     viewport: window.innerWidth,
     selectedTool: document.querySelector(".note-tools-launcher-buttons button.is-active")?.textContent?.trim(),
     activePianoKeys: [...document.querySelectorAll(".note-tools-embedded .piano-key.is-active")].map(key => key.getAttribute("aria-label")),
-    readout: document.querySelector(".note-tools-embedded .note-readout")?.textContent,
+    hasReadout: !!document.querySelector(".note-tools-embedded .note-readout"),
     pianoScrollContained: (() => {
       const scroller = document.querySelector(".note-tools-embedded .piano-scroll");
       return scroller && scroller.scrollWidth > scroller.clientWidth;
@@ -235,7 +235,7 @@ try {
     || embeddedTools.activePianoKeys.length !== 2
     || !embeddedTools.activePianoKeys.some(label => label.includes("C 4"))
     || !embeddedTools.activePianoKeys.some(label => label.includes("E 4"))
-    || !embeddedTools.readout?.includes("329.6 Hz")
+    || embeddedTools.hasReadout
     || !embeddedTools.pianoScrollContained) {
     throw new Error(`Embedded pitch tools failed: ${JSON.stringify(embeddedTools)}`);
   }
@@ -345,14 +345,14 @@ try {
   await devtools.waitFor(`document.readyState === "complete"`);
   await devtools.waitFor(`document.querySelector(".note-tools-standalone .piano-key") !== null`);
   await devtools.evaluate(`document.querySelector('.note-tools-standalone [aria-label="Play A sharp or B flat 4 on the pitch pipe"]').click()`, true);
-  await devtools.waitFor(`document.querySelector(".note-tools-standalone .note-readout strong")?.textContent === "A♯ / B♭4"`);
+  await devtools.waitFor(`document.querySelector(".note-tools-standalone .pitch-pipe-notes button.is-active")?.getAttribute("aria-label") === "Play A sharp or B flat 4 on the pitch pipe"`);
   const standaloneTools = await devtools.evaluate(`({
     viewport: window.innerWidth,
     width: document.documentElement.scrollWidth,
     heading: document.querySelector(".tools-page-hero h1")?.textContent,
     pitchPipeNotes: document.querySelectorAll(".note-tools-standalone .pitch-pipe-notes button").length,
     pianoKeys: document.querySelectorAll(".note-tools-standalone .piano-key").length,
-    readout: document.querySelector(".note-tools-standalone .note-readout")?.textContent,
+    hasReadout: !!document.querySelector(".note-tools-standalone .note-readout"),
     backLink: document.querySelector('.header-nav a[href="/"]')?.textContent,
     textFits: [
       document.querySelector(".tools-page-hero h1")
@@ -362,7 +362,7 @@ try {
     || standaloneTools.heading !== "Pitch pipe & piano"
     || standaloneTools.pitchPipeNotes !== 12
     || standaloneTools.pianoKeys !== 37
-    || !standaloneTools.readout?.includes("466.2 Hz")
+    || standaloneTools.hasReadout
     || !standaloneTools.backLink?.includes("Browse tags")
     || !standaloneTools.textFits) {
     throw new Error(`Standalone pitch tools failed: ${JSON.stringify(standaloneTools)}`);

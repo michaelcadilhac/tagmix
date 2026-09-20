@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/icons";
 import { formatCount } from "@/lib/format";
 import { isCatalogSort } from "@/lib/search";
@@ -21,13 +21,20 @@ function updateSearch(values: Record<string, string>) {
   window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
+function rememberCatalogScroll() {
+  window.history.replaceState({
+    ...window.history.state,
+    tagmixCatalogScroll: { url: `${window.location.pathname}${window.location.search}`, y: window.scrollY },
+  }, "");
+}
+
 function TagCard({ tag, index }: { tag: TagSummary; index: number }) {
   const detail = [tag.alternateTitle && `aka “${tag.alternateTitle}”`, tag.version]
     .filter(Boolean)
     .join(" · ");
 
   return (
-    <Link className="tag-card" href={`/tags/${tag.id}`} style={{ "--card-order": index } as React.CSSProperties}>
+    <Link className="tag-card" href={`/tags/${tag.id}`} onNavigate={rememberCatalogScroll} style={{ "--card-order": index } as React.CSSProperties}>
       <div className="tag-card-copy">
         <h3>{tag.title}</h3>
         {detail && <p className="tag-card-detail">{detail}</p>}
@@ -100,8 +107,9 @@ export function CatalogBrowser() {
   const [requestState, setRequestState] = useState<{
     key: string;
     data: CatalogListResponse | null;
+    query: string;
     error: string;
-  }>({ key: "", data: null, error: "" });
+  }>({ key: "", data: null, query: "", error: "" });
   const data = requestState.data;
   const loading = requestState.key !== requestUrl;
   const error = requestState.key === requestUrl ? requestState.error : "";
@@ -115,13 +123,14 @@ export function CatalogBrowser() {
         .then(async (response) => {
           const payload = (await response.json()) as CatalogListResponse | { error?: string };
           if (!response.ok) throw new Error("error" in payload ? payload.error : "The catalog is unavailable.");
-          setRequestState({ key: requestUrl, data: payload as CatalogListResponse, error: "" });
+          if (!controller.signal.aborted) setRequestState({ key: requestUrl, data: payload as CatalogListResponse, query, error: "" });
         })
         .catch((requestError: unknown) => {
           if ((requestError as Error).name !== "AbortError") {
             setRequestState((current) => ({
               key: requestUrl,
               data: current.data,
+              query: current.query,
               error: requestError instanceof Error ? requestError.message : "The catalog is unavailable.",
             }));
           }
@@ -132,14 +141,25 @@ export function CatalogBrowser() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [requestUrl]);
+  }, [requestUrl, query]);
+
+  const restoredRequest = useRef("");
+  useLayoutEffect(() => {
+    if (loading || error || !data || restoredRequest.current === requestUrl) return;
+    const position = window.history.state?.tagmixCatalogScroll;
+    if (position?.url !== `${window.location.pathname}${window.location.search}` || !Number.isFinite(position.y) || position.y < 0) return;
+    // Browser restoration runs while the short loading skeleton is still visible.
+    // Restore our saved position only once the full result grid is in the DOM.
+    window.scrollTo({ top: position.y, behavior: "instant" });
+    restoredRequest.current = requestUrl;
+  }, [data, error, loading, requestUrl]);
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
   const resultMessage = useMemo(() => {
     if (!data) return "Loading the library…";
-    if (query) return `${formatCount(data.total)} ${data.total === 1 ? "match" : "matches"} for “${query}”`;
+    if (requestState.query) return `${formatCount(data.total)} ${data.total === 1 ? "match" : "matches"} for “${requestState.query}”`;
     return `${formatCount(data.total)} rehearsal-ready tags`;
-  }, [data, query]);
+  }, [data, requestState.query]);
 
   function updateStyle(nextStyle: string) {
     updateSearch({ style: nextStyle, page: "" });
@@ -156,12 +176,7 @@ export function CatalogBrowser() {
 
   return (
     <>
-      <section className="catalog-hero">
-        <div className="hero-music-lines" aria-hidden="true"><i /><i /><i /><i /><i /></div>
-        <div className="hero-copy">
-          <h1>Find a <em>tag.</em></h1>
-        </div>
-      </section>
+      <h1 className="sr-only">Browse tags</h1>
 
       <section className="catalog-section" aria-labelledby="catalog-heading">
         <div className="search-panel">

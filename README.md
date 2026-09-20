@@ -8,7 +8,7 @@ TagMix is a responsive rehearsal app for four-part music from [BarbershopTags.co
 - Renders PDF, PNG, JPEG, and GIF scores as cropped, browser-safe PNG images.
 - Converts MP3, M4A, WMA, and MIDI learning tracks to normalized dual-mono MP3.
 - Pads shorter learning tracks with trailing silence so every voice for a tag has the same duration.
-- Includes an in-browser chromatic pitch pipe and polyphonic three-octave piano on every tag and on a standalone tools page.
+- Includes an in-browser chromatic pitch pipe and polyphonic three-octave piano on every tag and on a standalone tools page. Tag reference tools can follow the rehearsal pitch with the optional **Pitch adjusted** switch (off by default). The standalone tools have their own pitch control, remembered for the browser session.
 - Detects and extracts the named voice from either channel when a source track has one part on one side and the other three on the other side.
 - Provides volume, pan, mute, solo, and pitch-preserving 0.25×–1× playback controls.
 - Transposes the mix by ±6 semitones without changing its speed, using real-time browser processing. It prefers an AudioWorklet and uses a compatibility processor when a plain-HTTP network origin hides that API.

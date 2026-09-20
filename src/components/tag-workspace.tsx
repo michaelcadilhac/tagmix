@@ -87,9 +87,9 @@ export function TagWorkspace({ tagId, initialPitch }: { tagId: string; initialPi
           <TagAccountActions key={tag.id} tagId={tag.id} pitchSemitones={pitchSemitones}>
             <div className="workspace-title-copy">
               <h1>{tag.title}</h1>
-              {subtitle && <p className="workspace-subtitle">{subtitle}</p>}
             </div>
           </TagAccountActions>
+          {subtitle && <p className="workspace-subtitle">{subtitle}</p>}
         </div>
         <dl className="workspace-facts">
           <div><dt>Key</dt><dd className="workspace-key"><span>{tag.key || "—"}</span><KeyPitchPipe musicalKey={tag.key} pitchSemitones={pitchSemitones} /></dd></div>
@@ -99,6 +99,7 @@ export function TagWorkspace({ tagId, initialPitch }: { tagId: string; initialPi
 
       <div className="workspace-grid">
         <ScoreViewer
+          pitchSemitones={pitchSemitones}
           originalUrl={tag.sheet.url}
           sheetType={tag.sheet.type}
           tagId={tag.id}

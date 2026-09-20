@@ -136,7 +136,7 @@ class DevTools {
       if (await this.evaluate(expression)) return;
       await wait(120);
     }
-    throw new Error(`Timed out waiting for: ${expression}`);
+    throw new Error(`Timed out waiting for: ${expression}; page: ${JSON.stringify(await this.evaluate('({ url: location.href, text: document.body.innerText.slice(0, 1200) })'))}`);
   }
 
   close() {
@@ -156,6 +156,10 @@ const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwM
 let devtools;
 let holdFolderWrites = false;
 const heldFolderWrites = [];
+let holdFolderChoices = false;
+const heldFolderChoices = [];
+let holdCatalogReads = false;
+const heldCatalogReads = [];
 const errors = [];
 const checks = [];
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
@@ -181,7 +185,7 @@ async function api(path, method = "GET", body, userId) {
     return { status: response.status, data: await response.json() };
   })()`);
 }
-async function checkKeyPitch(midi) {
+async function checkTone(selector, midi) {
   await devtools.evaluate(`if (!window.keyToneProbe) {
     window.keyToneProbe = [];
     const create = AudioContext.prototype.createOscillator;
@@ -192,12 +196,15 @@ async function checkKeyPitch(midi) {
     };
   }`);
   const previous = await devtools.evaluate('window.keyToneProbe.length');
-  await click('.key-pitch-pipe');
+  await click(selector);
   const fundamental = 440 * 2 ** ((midi - 69) / 12);
   // AudioParam.value reflects scheduled values only once the audio clock advances.
-  await devtools.waitFor(`window.keyToneProbe.slice(${previous}).length === 3 && Math.abs(window.keyToneProbe[${previous}].frequency.value - ${fundamental}) < 0.001`);
+  await devtools.waitFor(`window.keyToneProbe.slice(${previous}).length === 3 && window.keyToneProbe.slice(${previous}).every((oscillator, index) => Math.abs(oscillator.frequency.value - ${fundamental} * (index + 1)) < 0.001)`);
   const frequencies = await devtools.evaluate(`window.keyToneProbe.slice(${previous}).map(oscillator => oscillator.frequency.value)`);
-  assert(frequencies.length === 3 && frequencies.every((frequency, index) => Math.abs(frequency - fundamental * (index + 1)) < 0.001), `Key pitch pipe sounds the wrong note: ${JSON.stringify(frequencies)} for MIDI ${midi}`);
+  assert(frequencies.length === 3 && frequencies.every((frequency, index) => Math.abs(frequency - fundamental * (index + 1)) < 0.001), `Reference tool sounds the wrong note: ${JSON.stringify(frequencies)} for MIDI ${midi}`);
+}
+async function checkKeyPitch(midi) {
+  await checkTone('.key-pitch-pipe', midi);
   assert(await devtools.evaluate('document.querySelector(".workspace-key .key-pitch-pipe")?.getAttribute("aria-label").includes("pitch pipe")'), "Key pitch pipe is missing its accessible label or placement beside the key");
 }
 async function checkSaveDropdown(label) {
@@ -236,12 +243,26 @@ try {
   devtools.onEvent = (message) => {
     if (message.method === "Runtime.exceptionThrown") errors.push(message.params.exceptionDetails.text);
     if (message.method === "Fetch.requestPaused") {
+      if (new URL(message.params.request.url).pathname === "/api/tags") {
+        if (holdCatalogReads) heldCatalogReads.push(message.params.requestId);
+        else void devtools.send("Fetch.continueRequest", { requestId: message.params.requestId });
+        return;
+      }
+      if (new URL(message.params.request.url).pathname === "/api/account/folders") {
+        if (holdFolderChoices) heldFolderChoices.push(message.params.requestId);
+        else void devtools.send("Fetch.continueRequest", { requestId: message.params.requestId });
+        return;
+      }
       if (message.params.request.url.includes("/api/account/folders/")) {
         if (holdFolderWrites && message.params.request.method !== "GET") {
           heldFolderWrites.push(message.params);
         } else {
           void devtools.send("Fetch.continueRequest", { requestId: message.params.requestId });
         }
+        return;
+      }
+      if (!message.params.request.url.includes("/audio/") && !new URL(message.params.request.url).pathname.endsWith("/sheet")) {
+        void devtools.send("Fetch.continueRequest", { requestId: message.params.requestId });
         return;
       }
       const isAudio = message.params.request.url.includes("/audio/");
@@ -259,7 +280,7 @@ try {
   await devtools.send("Runtime.enable");
   await devtools.send("Emulation.setFocusEmulationEnabled", { enabled: true });
   await devtools.send("Browser.grantPermissions", { origin: baseUrl, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
-  await devtools.send("Fetch.enable", { patterns: [{ urlPattern: "*/api/tags/*/audio/*" }, { urlPattern: "*/api/tags/*/sheet*" }, { urlPattern: "*/api/account/folders/*" }] });
+  await devtools.send("Fetch.enable", { patterns: [{ urlPattern: "*/api/tags*" }, { urlPattern: "*/api/account/folders/*" }, { urlPattern: "*/api/account/folders?*" }] });
   const legacyResponse = await fetch(`${baseUrl}/shared/${legacyEditToken}`, { redirect: "manual" });
   // Next.js may already be streaming the layout, in which case the permanent
   // redirect is encoded in the page rather than the initial HTTP headers.
@@ -274,6 +295,9 @@ try {
     await devtools.send("Emulation.setDeviceMetricsOverride", { width, height: 800, deviceScaleFactor: 1, mobile: width === 360 });
     await navigate("/");
     await devtools.waitFor('!!document.querySelector(".tag-grid[aria-busy=false]")');
+    assert(await devtools.evaluate('!document.querySelector(".catalog-hero")'), "Catalog hero remains");
+    const countBeforeSearch = await devtools.evaluate('document.querySelector("#catalog-heading").textContent');
+    holdCatalogReads = true;
     const historyLength = await devtools.evaluate('history.length');
     await devtools.evaluate('document.querySelector("input[type=search]").focus()');
     for (const text of "Old kentucky Home") await devtools.send("Input.insertText", { text });
@@ -284,31 +308,48 @@ try {
     assert(await devtools.evaluate('document.querySelector("input[type=search]").selectionStart === 5'), "Search editing moved the cursor");
     await fill('.catalog-filters label:first-child select', "Barbershop");
     await fill('.catalog-filters label:last-child select', "rating");
+    await wait(400);
+    assert(heldCatalogReads.length > 0, "Catalog delay did not intercept the search");
+    assert(await devtools.evaluate('document.querySelector("#catalog-heading").textContent') === countBeforeSearch, "Pending search mixed a new query with an old count");
+    holdCatalogReads = false;
+    for (const requestId of heldCatalogReads.splice(0)) await devtools.send("Fetch.continueRequest", { requestId }).catch(error => { if (!error.message.includes("Invalid InterceptionId")) throw error; });
     await devtools.waitFor('document.querySelector("#catalog-heading")?.textContent.includes("80 matches") && !!document.querySelector(".tag-grid[aria-busy=false]")');
     await click('.pagination button:last-child');
     await devtools.waitFor('document.querySelector(".pagination span")?.textContent === "Page 2 of 3" && !!document.querySelector(".tag-grid[aria-busy=false]")');
     assert(await devtools.evaluate('history.length') === historyLength, "Filters added extra Back entries");
     const snapshot = 'JSON.stringify({ search: location.search, input: document.querySelector("input[type=search]")?.value, filters: [...document.querySelectorAll(".catalog-filters select")].map(el => el.value), page: document.querySelector(".pagination span")?.textContent, tags: [...document.querySelectorAll(".tag-card h3")].map(el => el.textContent) })';
     const expected = await devtools.evaluate(snapshot);
-    const tagPath = await devtools.evaluate('document.querySelector(".tag-card").getAttribute("href")');
-    await click('.tag-card');
+    await devtools.evaluate('document.querySelector(".tag-card:last-child").scrollIntoView({ block: "center", behavior: "instant" })');
+    const expectedScroll = await devtools.evaluate('window.scrollY');
+    assert(expectedScroll > 1000, "Scroll regression must begin near the end of the results");
+    const tagPath = await devtools.evaluate('document.querySelector(".tag-card:last-child").getAttribute("href")');
+    await click('.tag-card:last-child');
     await devtools.waitFor('!!document.querySelector(".workspace-heading")');
+    holdCatalogReads = true;
     await devtools.evaluate('history.back()');
+    await devtools.waitFor('location.pathname === "/" && !document.querySelector(".tag-grid[aria-busy=false]")');
+    await wait(600);
+    assert(heldCatalogReads.length > 0, "Back did not wait for the delayed catalog");
+    holdCatalogReads = false;
+    for (const requestId of heldCatalogReads.splice(0)) await devtools.send("Fetch.continueRequest", { requestId });
     await devtools.waitFor('location.pathname === "/" && !!document.querySelector(".tag-grid[aria-busy=false]")');
     await wait(400); // Catch an accidental page reset from a mount-time debounce.
     assert(await devtools.evaluate(snapshot) === expected, "Back lost search, filters, page, or result order");
+    assert(Math.abs(await devtools.evaluate('window.scrollY') - expectedScroll) < 3, "Back restored scroll before the full catalog loaded");
     await layout("Restored catalog");
     await devtools.evaluate('history.forward()');
     await devtools.waitFor(`location.pathname === ${JSON.stringify(tagPath)} && !!document.querySelector(".workspace-heading")`);
     await devtools.evaluate('history.back()');
     await devtools.waitFor('location.pathname === "/" && !!document.querySelector(".tag-grid[aria-busy=false]")');
+    assert(Math.abs(await devtools.evaluate('window.scrollY') - expectedScroll) < 3, "Repeated Back lost scroll position");
     await devtools.send("Page.reload");
     await devtools.waitFor('!!document.querySelector(".tag-grid[aria-busy=false]")');
+    assert(Math.abs(await devtools.evaluate('window.scrollY') - expectedScroll) < 3, "Reload lost the saved result position");
     assert(await devtools.evaluate(snapshot) === expected, "Reload lost catalog state");
     await click('button[aria-label="Clear search"]');
     await devtools.waitFor('document.querySelector("input[type=search]")?.value === "" && document.querySelector(".pagination span")?.textContent === "Page 1 of 3" && !!document.querySelector(".tag-grid[aria-busy=false]")');
     assert(await devtools.evaluate('!new URLSearchParams(location.search).has("q") && !new URLSearchParams(location.search).has("page")'), "Clear search retained stale URL state");
-    checks.push(`Catalog search, filters, ordering, and page survive Back/Forward and reload at ${width}px`);
+    checks.push(`Catalog keeps pending counts accurate and restores search, filters, page, and bottom-of-page scrolling after delayed Back/Forward and reload at ${width}px`);
   }
   await devtools.send("Emulation.setDeviceMetricsOverride", { width: 360, height: 800, deviceScaleFactor: 1, mobile: true });
   await navigate("/account");
@@ -339,11 +380,95 @@ try {
   await navigate("/tags/37");
   await devtools.waitFor('!!document.querySelector(".mark-button") && !document.querySelector(".mark-button").disabled');
   await layout("Rehearsal account controls");
+  const referenceGeometry = `(() => {
+    const row = document.querySelector(".note-tools-launcher").getBoundingClientRect();
+    const buttons = document.querySelector(".note-tools-launcher-buttons").getBoundingClientRect();
+    return JSON.stringify({ height: row.height, buttonsX: buttons.left - row.left, buttonsY: buttons.top - row.top });
+  })()`;
+  for (const width of [360, 1000, 1440]) {
+    await devtools.send("Emulation.setDeviceMetricsOverride", { width, height: 1000, deviceScaleFactor: 1, mobile: width === 360 });
+    const beforePitchToggle = await devtools.evaluate(referenceGeometry);
+    assert(await devtools.evaluate('document.querySelector(".tools-pitch-toggle").hidden && document.querySelector(".tools-pitch-toggle input").disabled'), "Original key exposes the pitch toggle");
+    await click('.mixer-panel [aria-label="Raise pitch one semitone"]');
+    await devtools.waitFor('!document.querySelector(".tools-pitch-toggle").hidden');
+    assert(await devtools.evaluate(referenceGeometry) === beforePitchToggle, `Pitch toggle changes reference layout at ${width}px`);
+    await layout("Stable reference launcher");
+    await click('.mixer-panel [aria-label="Lower pitch one semitone"]');
+    await devtools.waitFor('document.querySelector(".tools-pitch-toggle").hidden');
+  }
+  await devtools.send("Emulation.setDeviceMetricsOverride", { width: 360, height: 800, deviceScaleFactor: 1, mobile: true });
   await checkKeyPitch(60);
   await click('[aria-label="Raise pitch one semitone"]');
   await click('[aria-label="Raise pitch one semitone"]');
   await devtools.waitFor('document.querySelector(".pitch-stepper output")?.textContent === "+2 semitones"');
   await checkKeyPitch(62);
+  assert(await devtools.evaluate('document.querySelector(".tools-pitch-toggle input")?.checked === false'), "Tag pitch adjustment should default off");
+  await click('.note-tools-launcher-buttons button:last-child');
+  await devtools.waitFor('!!document.querySelector(".pitch-pipe-notes")');
+  await checkTone('.pitch-pipe-notes [aria-label="Play C 4 on the pitch pipe"]', 60);
+  await click('.tools-pitch-toggle input');
+  await checkTone('.pitch-pipe-notes [aria-label="Play C 4 on the pitch pipe"]', 62);
+  assert(await devtools.evaluate('document.querySelector(".pitch-pipe-notes button.is-active")?.getAttribute("aria-label") === "Play C 4 on the pitch pipe" && !document.querySelector(".note-readout")'), "Adjusted pitch changed the selected key or left a readout");
+  await click('.note-tools-launcher-buttons button:first-child');
+  await devtools.waitFor('!!document.querySelector(".piano-key")');
+  await checkTone('.piano [aria-label="Play C 4 on the piano"]', 62);
+  await click('.mixer-panel [aria-label="Lower pitch one semitone"]');
+  await checkTone('.piano [aria-label="Play C 4 on the piano"]', 61);
+  await click('.mixer-panel [aria-label="Lower pitch one semitone"]');
+  await devtools.waitFor('document.querySelector(".tools-pitch-toggle").hidden');
+  await checkTone('.piano [aria-label="Play C 4 on the piano"]', 60);
+  await click('.mixer-panel [aria-label="Raise pitch one semitone"]');
+  await click('.mixer-panel [aria-label="Raise pitch one semitone"]');
+  await checkTone('.piano [aria-label="Play C 4 on the piano"]', 62);
+  await click('.tools-pitch-toggle input');
+  await checkTone('.piano [aria-label="Play C 4 on the piano"]', 60);
+  await checkKeyPitch(62);
+  await layout("Tag reference pitch tools");
+  await devtools.evaluate('document.querySelector(".note-tools-launcher").scrollIntoView({ block: "center", behavior: "instant" })');
+  await screenshot("mobile-reference-pitch");
+  await click('.note-tools-launcher-buttons button:first-child');
+  await devtools.evaluate('window.scrollTo({ top: 0, behavior: "instant" })');
+  await devtools.waitFor('window.scrollY === 0');
+  checks.push("Reference pitch defaults off, follows the tag offset when enabled, hides at zero, and does not change the key pitch button");
+  const bookmarkBounds = 'JSON.stringify([document.querySelector(".tag-save-button").getBoundingClientRect().width, document.querySelector(".tag-save-button").getBoundingClientRect().height, document.querySelector(".workspace-title-copy").getBoundingClientRect().left])';
+  const beforePreload = await devtools.evaluate(bookmarkBounds);
+  holdFolderChoices = true;
+  await click('.tag-save-button');
+  await devtools.waitFor('document.querySelector(".tag-save-button").getAttribute("aria-busy") === "true"');
+  await wait(150);
+  assert(await devtools.evaluate('!document.querySelector(".save-tag-dropdown, .bookmark-spinner")'), "Fast preloading shows a dropdown or spinner too early");
+  assert(heldFolderChoices.length === 1, "Opening the bookmark did not fetch fresh folders");
+  await devtools.send("Fetch.continueRequest", { requestId: heldFolderChoices.shift() });
+  await devtools.waitFor('!!document.querySelector(".save-folder-option")');
+  assert(await devtools.evaluate('!document.querySelector(".bookmark-spinner") && document.querySelector(".tag-save-button").getAttribute("aria-busy") === "false"'), "Bookmark did not leave its loading state");
+  await click('.tag-save-button');
+  await click('.tag-save-button');
+  await devtools.waitFor('!!document.querySelector(".bookmark-spinner")');
+  assert(await devtools.evaluate('!document.querySelector(".save-tag-dropdown") && document.querySelector(".tag-save-button").getAttribute("aria-expanded") === "false"'), "Slow preload opened an incomplete dropdown");
+  assert(await devtools.evaluate(bookmarkBounds) === beforePreload, "Spinner changed bookmark size or title position");
+  await screenshot("mobile-bookmark-loading");
+  await devtools.send("Fetch.continueRequest", { requestId: heldFolderChoices.shift() });
+  await devtools.waitFor('!!document.querySelector(".save-folder-option") && !document.querySelector(".bookmark-spinner")');
+  await click('.tag-save-button');
+  await click('.tag-save-button');
+  await devtools.waitFor('document.querySelector(".tag-save-button").getAttribute("aria-busy") === "true"');
+  await wait(100);
+  await devtools.evaluate('document.querySelector(".tag-save-button").focus()');
+  await devtools.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+  await devtools.send("Fetch.continueRequest", { requestId: heldFolderChoices.shift() });
+  await wait(600);
+  assert(await devtools.evaluate('!document.querySelector(".save-tag-dropdown, .bookmark-spinner")'), "Cancelled preload reopened the dropdown or left a spinner");
+  await click('.tag-save-button');
+  await devtools.waitFor('document.querySelector(".tag-save-button").getAttribute("aria-busy") === "true"');
+  await wait(100);
+  await devtools.send("Fetch.fulfillRequest", { requestId: heldFolderChoices.shift(), responseCode: 503, responseHeaders: [{ name: "Content-Type", value: "application/json" }], body: Buffer.from(JSON.stringify({ error: "Folders temporarily unavailable." })).toString("base64") });
+  await devtools.waitFor('document.querySelector(".tag-account-actions [role=alert]")?.textContent.includes("Folders temporarily unavailable.")');
+  assert(await devtools.evaluate('!document.querySelector(".save-tag-dropdown, .bookmark-spinner")'), "Failed preload displayed an incomplete menu");
+  holdFolderChoices = false;
+  await click('.tag-account-actions [role=alert] button');
+  await devtools.waitFor('!!document.querySelector(".save-folder-option")');
+  await click('.tag-save-button');
+  checks.push("Bookmark preloads before opening, delays the spinner, preserves button dimensions, cancels pending opening, and recovers from failed loads");
   await devtools.evaluate('document.querySelector(".tag-save-button").focus()');
   await devtools.send("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40 });
   await devtools.waitFor('document.querySelectorAll(".save-tag-dropdown [role=menuitem]").length === 2 && !document.querySelector(".new-folder-option").disabled');
@@ -375,6 +500,11 @@ try {
   await devtools.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
   await layout("Rehearsal desktop");
   await screenshot("desktop-tag");
+  await click('.note-tools-launcher-buttons button:last-child');
+  await devtools.evaluate('document.querySelector(".note-tools-launcher").scrollIntoView({ block: "center", behavior: "instant" })');
+  await screenshot("desktop-reference-pitch");
+  await click('.note-tools-launcher-buttons button:last-child');
+  await devtools.evaluate('window.scrollTo({ top: 0, behavior: "instant" })');
   const beforeDropdown = await devtools.evaluate('document.querySelector(".workspace-grid").getBoundingClientRect().top');
   await click('.tag-account-actions button[aria-expanded]');
   await devtools.waitFor('!!document.querySelector(".new-folder-option") && !document.querySelector(".new-folder-option").disabled');
@@ -665,6 +795,61 @@ try {
   await devtools.waitFor(`!!document.querySelector('.folder-grid a[href="/folders/${folderId}"]')`);
   assert((await api(`account/folders/${importedId}`, "GET", undefined, other.id)).data.folder.access === "owner", "Permission changes affected an independent copy");
   checks.push("Permission changes preserve the URL and saved folders, reject stale writes, refresh controls on focus, and preserve copies");
+  await navigate("/tools");
+  await devtools.waitFor('!!document.querySelector(".note-tools-standalone .piano-key")');
+  assert(await devtools.evaluate('!document.querySelector(".note-readout, .tools-pitch-toggle") && document.querySelector(".tools-pitch-control output").textContent === "Original key"'), "Standalone pitch controls or removed readout are wrong");
+  await checkTone('.pitch-pipe-notes [aria-label="Play C 4 on the pitch pipe"]', 60);
+  await click('.tools-pitch-control [aria-label="Lower pitch one semitone"]');
+  await click('.tools-pitch-control [aria-label="Lower pitch one semitone"]');
+  await checkTone('.pitch-pipe-notes [aria-label="Play C 4 on the pitch pipe"]', 58);
+  await checkTone('.piano [aria-label="Play C 4 on the piano"]', 58);
+  // Two simultaneous touches should sound both adjusted notes and light the written keys.
+  const beforeChord = await devtools.evaluate('window.keyToneProbe.length');
+  await devtools.evaluate(`['C', 'E'].forEach((note, index) => document.querySelector('.piano [aria-label="Play ' + note + ' 4 on the piano"]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: index + 1, pointerType: 'touch' })))`, true);
+  await devtools.waitFor(`window.keyToneProbe.slice(${beforeChord}).length === 6 && window.keyToneProbe.slice(${beforeChord}).every((oscillator, index) => Math.abs(oscillator.frequency.value - 440 * 2 ** (((index < 3 ? 58 : 62) - 69) / 12) * (index % 3 + 1)) < 0.001)`);
+  assert(await devtools.evaluate('document.querySelectorAll(".piano-key.is-active").length === 2'), "Adjusted piano lost multi-touch highlighting");
+  await layout("Standalone pitch tools");
+  await devtools.waitFor('!!document.querySelector(".piano .instrument-description")');
+  await screenshot("mobile-tools-pitch");
+  await navigate("/tools");
+  await devtools.waitFor('document.querySelector(".tools-pitch-control output")?.textContent === "-2 semitones"');
+  await checkTone('.pitch-pipe-notes [aria-label="Play C 4 on the pitch pipe"]', 58);
+  await navigate("/tags/37");
+  await devtools.waitFor('!!document.querySelector(".tools-pitch-toggle input")');
+  assert(await devtools.evaluate('!document.querySelector(".tools-pitch-toggle input").checked'), "Standalone session pitch enabled tag adjustment");
+  await navigate("/tools");
+  await devtools.waitFor('document.querySelector(".tools-pitch-control output")?.textContent === "-2 semitones"');
+  await devtools.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+  await layout("Standalone pitch tools desktop");
+  await devtools.waitFor('!document.querySelector(".piano .instrument-description")');
+  assert(await devtools.evaluate(`(() => {
+    const scroller = document.querySelector(".piano-scroll").getBoundingClientRect();
+    const keyboard = document.querySelector(".piano-keyboard").getBoundingClientRect();
+    return Math.abs(keyboard.left + keyboard.right - scroller.left - scroller.right) < 2;
+  })()`), "Piano is not centered when it fits");
+  for (const [key, code, keyCode] of [["Enter", "Enter", 13], [" ", "Space", 32]]) {
+    await devtools.evaluate('document.querySelector(".piano-scroll").scrollIntoView({ block: "center", behavior: "instant" }); document.querySelector(".piano-key-white").focus({ preventScroll: true })');
+    await devtools.send("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, text: key === "Enter" ? "\r" : " ", unmodifiedText: key === "Enter" ? "\r" : " " });
+    await devtools.send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode });
+    await devtools.waitFor('document.querySelector(".piano-key-white").classList.contains("is-active")');
+    assert(await devtools.evaluate(`(() => {
+      const black = document.querySelector(".piano-key-black");
+      const bounds = black.getBoundingClientRect();
+      return document.elementFromPoint(bounds.left + 3, bounds.top + 20)?.closest(".piano-key") === black;
+    })()`), `${code} raised the white key above the black key`);
+  }
+  checks.push("Piano stays below black keys during keyboard activation, centers when it fits, and only shows the scroll hint when needed");
+  await devtools.evaluate('window.scrollTo({ top: 0, behavior: "instant" })');
+  assert(await devtools.evaluate(`(() => {
+    const label = document.querySelector(".tools-pitch-control > span").getBoundingClientRect();
+    const stepper = document.querySelector(".tools-pitch-control .pitch-stepper").getBoundingClientRect();
+    return stepper.left - label.right <= 13 && stepper.left > label.right && Math.abs((label.top + label.bottom - stepper.top - stepper.bottom) / 2) < 1;
+  })()`), "Pitch label is not immediately beside the selector");
+  await screenshot("desktop-tools-pitch");
+  await devtools.evaluate('sessionStorage.setItem("tagmix:tools:pitch", "99")');
+  await navigate("/tools");
+  await devtools.waitFor('document.querySelector(".tools-pitch-control output")?.textContent === "Original key"');
+  checks.push("Standalone pitch shifts both instruments, preserves piano multi-touch, survives reload/navigation in session, rejects invalid stored pitch, and stays separate from tags");
   assert(errors.length === 0, `Browser errors: ${errors.join(", ")}`);
   console.log(JSON.stringify({ passed: true, checks, media: "Browser fixtures; account APIs and SQLite are real" }, null, 2));
 } finally {

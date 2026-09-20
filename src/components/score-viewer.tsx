@@ -10,9 +10,10 @@ type ScoreViewerProps = {
   sheetType: string;
   tagId: number;
   title: string;
+  pitchSemitones: number;
 };
 
-export function ScoreViewer({ originalUrl, sheetType, tagId, title }: ScoreViewerProps) {
+export function ScoreViewer({ originalUrl, sheetType, tagId, title, pitchSemitones }: ScoreViewerProps) {
   const [zoom, setZoom] = useState(100);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -75,7 +76,7 @@ export function ScoreViewer({ originalUrl, sheetType, tagId, title }: ScoreViewe
       <footer className="score-footer">
         <a href={originalUrl} rel="noreferrer" target="_blank">Original file <Icon name="external" size={14} /></a>
       </footer>
-      <NoteTools collapsible />
+      <NoteTools collapsible pitchSemitones={pitchSemitones} />
     </section>
   );
 }
