@@ -347,6 +347,26 @@ try {
     const stoppedClock = await devtools.evaluate('idleContexts[0].currentTime');
     await wait(300);
     assert(await devtools.evaluate('idleContexts[0].currentTime') === stoppedClock, "Paused mixer keeps rendering audio");
+    // Model strict gesture admission and slow context wake-up. Chromium alone
+    // permits starts after await and would otherwise miss this iOS regression.
+    await devtools.evaluate(`(() => {
+      document.addEventListener("click", event => {
+        if (!event.target.closest(".play-button")) return;
+        window.inPlaybackGesture = true;
+        queueMicrotask(() => { window.inPlaybackGesture = false; });
+      }, true);
+      const context = idleContexts[0];
+      const resume = context.resume.bind(context);
+      context.resume = () => {
+        if (!window.inPlaybackGesture) return Promise.reject(new Error("Context resumed outside the playback gesture"));
+        return resume().then(() => new Promise(resolve => setTimeout(resolve, 120)));
+      };
+      const play = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function() {
+        if (idleAudios.includes(this) && !window.inPlaybackGesture) return Promise.reject(new Error("Track started outside the playback gesture"));
+        return play.call(this);
+      };
+    })()`);
     await click('.mixer-panel [aria-label="Raise pitch one semitone"]');
     await fill('input[aria-label="Playback position"]', "3");
     for (let cycle = 0; cycle < 3; cycle++) {
@@ -359,7 +379,7 @@ try {
     await click('.play-button');
     await devtools.waitFor('idleContexts[0].state === "suspended" && idleAudios.every(a => a.paused) && idleAudios.some(a => a.ended)');
     await click('.play-button');
-    await devtools.waitFor('idleContexts[0].state === "running" && idleAudios.every(a => !a.paused && a.currentTime < 2)');
+    await devtools.waitFor('idleContexts[0].state === "running" && idleAudios.every(a => !a.paused && a.currentTime < 2) && !document.querySelector(".play-button").disabled');
     await click('.play-button');
     await devtools.waitFor('idleContexts[0].state === "suspended"');
     await devtools.evaluate('idleAudios[0].play = () => Promise.reject(new Error("Test playback failure"))');
@@ -367,7 +387,7 @@ try {
     await devtools.waitFor('document.body.textContent.includes("Test playback failure") && idleContexts[0].state === "suspended" && idleAudios.every(a => a.paused)');
     await devtools.evaluate('delete idleAudios[0].play');
     await click('.play-button');
-    await devtools.waitFor('idleContexts[0].state === "running" && idleAudios.every(a => !a.paused)');
+    await devtools.waitFor('idleContexts[0].state === "running" && idleAudios.every(a => !a.paused) && !document.querySelector(".play-button").disabled');
     await click('.key-pitch-pipe');
     await devtools.waitFor('idleContexts.length === 2 && idleContexts[1].state === "running"');
     await devtools.waitFor('idleContexts[1].state === "suspended"');
@@ -387,7 +407,7 @@ try {
     await devtools.waitFor('idleContexts.every(c => c.state === "suspended")');
     await devtools.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: probe.identifier });
     await devtools.evaluate('localStorage.removeItem("tagmix:mix:37")');
-    checks.push(`${backend}: idle audio clocks stop; pause/resume, paused seeking/pitch changes, natural end/replay, failed playback recovery, reference-note resume, and overlapping piano notes work`);
+    checks.push(`${backend}: idle audio clocks stop; all tracks resume in the tap handler even with delayed context resume; paused seeking/pitch changes, natural end/replay, failed playback recovery, reference-note resume, and overlapping piano notes work`);
   }
   for (const width of [360, 1440]) {
     await devtools.send("Emulation.setDeviceMetricsOverride", { width, height: 800, deviceScaleFactor: 1, mobile: width === 360 });

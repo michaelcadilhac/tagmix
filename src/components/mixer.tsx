@@ -413,18 +413,27 @@ export function Mixer({ tag, pitchSemitones, onPitchChange, initialPitch }: {
 
     setIsStarting(true);
     try {
-      const graph = await ensureGraph();
-      await graph.context.resume();
+      // Reuse an existing graph synchronously: even awaiting a resolved promise
+      // here moves resume/play outside the tap handler on stricter browsers.
+      const graph = graphRef.current ?? await ensureGraph();
       if (duration && currentTime >= duration - 0.05) seek(0);
-      const results = await Promise.allSettled(
-        VOICES.map((voice) => {
+      // Start all four elements in the same user gesture as context.resume().
+      // Waiting for resume first can lose iOS's permission to restart the parts.
+      // Settle the wake-up before handling failure; suspending a still-pending
+      // resume can otherwise leave the context running after the failed start.
+      const results = await Promise.allSettled([
+        graph.context.resume(),
+        ...VOICES.map(async (voice) => {
           const audio = audiosRef.current[voice];
           if (!audio) throw new Error(`${voice} is unavailable.`);
           return audio.play();
         }),
-      );
+      ]);
       const rejection = results.find((result) => result.status === "rejected");
       if (rejection?.status === "rejected") throw rejection.reason;
+      if (VOICES.some((voice) => audiosRef.current[voice]?.paused)) {
+        throw new Error("Not all four parts could resume. Press Play to try again.");
+      }
       setIsPlaying(true);
     } catch (error) {
       pausePlayback();
