@@ -324,6 +324,71 @@ try {
   await devtools.waitFor(`location.pathname === "/shared/${legacyMainToken}" && document.querySelector(".folder-owner")?.textContent === "Owner: legacy@example.test"`);
   assert(await devtools.evaluate('document.querySelector(".folder-heading")?.textContent.includes("Read-only")'), "Migrated folder does not start read-only");
   checks.push("Legacy edit URLs redirect to the unchanged main URL; existing folders migrate to read-only");
+  for (const backend of ["worklet", "fallback"]) {
+    const probe = await devtools.send("Page.addScriptToEvaluateOnNewDocument", { source: `
+      window.idleContexts = []; window.idleAudios = [];
+      ${backend === "fallback" ? 'window.AudioWorkletNode = undefined;' : ''}
+      const createSource = AudioContext.prototype.createMediaElementSource;
+      AudioContext.prototype.createMediaElementSource = function(audio) {
+        window.idleAudios.push(audio); return createSource.call(this, audio);
+      };
+      window.AudioContext = new Proxy(window.AudioContext, { construct(target, args) {
+        const context = new target(...args); window.idleContexts.push(context); return context;
+      }});
+    ` });
+    await navigate("/tags/37");
+    await devtools.waitFor('document.querySelector(".track-readiness")?.textContent.includes("All four parts ready")');
+    assert(await devtools.evaluate('idleContexts.length === 0'), "An idle tag created an audio context before playback");
+    await click('.play-button');
+    await devtools.waitFor('idleAudios.length === 4 && idleAudios.every(a => !a.paused && a.currentTime > 0.2)');
+    assert(await devtools.evaluate(`document.querySelector(".mixer-panel").dataset.clientPitchBackend === ${JSON.stringify(backend)}`), "Wrong pitch backend in idle test");
+    await click('.play-button');
+    await devtools.waitFor('idleContexts[0].state === "suspended" && idleAudios.every(a => a.paused)');
+    const stoppedClock = await devtools.evaluate('idleContexts[0].currentTime');
+    await wait(300);
+    assert(await devtools.evaluate('idleContexts[0].currentTime') === stoppedClock, "Paused mixer keeps rendering audio");
+    await click('.mixer-panel [aria-label="Raise pitch one semitone"]');
+    await fill('input[aria-label="Playback position"]', "3");
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await click('.play-button');
+      await devtools.waitFor('idleContexts[0].state === "running" && idleAudios.every(a => !a.paused && a.currentTime >= 3) && document.querySelector(".play-button").getAttribute("aria-label") === "Pause all parts"');
+      await click('.play-button');
+      await devtools.waitFor('idleContexts[0].state === "suspended"');
+    }
+    await fill('input[aria-label="Playback position"]', "9.7");
+    await click('.play-button');
+    await devtools.waitFor('idleContexts[0].state === "suspended" && idleAudios.every(a => a.paused) && idleAudios.some(a => a.ended)');
+    await click('.play-button');
+    await devtools.waitFor('idleContexts[0].state === "running" && idleAudios.every(a => !a.paused && a.currentTime < 2)');
+    await click('.play-button');
+    await devtools.waitFor('idleContexts[0].state === "suspended"');
+    await devtools.evaluate('idleAudios[0].play = () => Promise.reject(new Error("Test playback failure"))');
+    await click('.play-button');
+    await devtools.waitFor('document.body.textContent.includes("Test playback failure") && idleContexts[0].state === "suspended" && idleAudios.every(a => a.paused)');
+    await devtools.evaluate('delete idleAudios[0].play');
+    await click('.play-button');
+    await devtools.waitFor('idleContexts[0].state === "running" && idleAudios.every(a => !a.paused)');
+    await click('.key-pitch-pipe');
+    await devtools.waitFor('idleContexts.length === 2 && idleContexts[1].state === "running"');
+    await devtools.waitFor('idleContexts[1].state === "suspended"');
+    assert(await devtools.evaluate('idleContexts[0].state === "running" && idleAudios.every(a => !a.paused)'), "Finished reference note stopped the mixer");
+    await click('.play-button');
+    await devtools.waitFor('idleContexts.every(c => c.state === "suspended")');
+    await click('.key-pitch-pipe');
+    await devtools.waitFor('idleContexts[1].state === "running"');
+    await devtools.waitFor('idleContexts[1].state === "suspended"');
+    await click('.note-tools-launcher-buttons button:first-child');
+    await devtools.waitFor('!!document.querySelector(".piano-key")');
+    await click('.piano [aria-label="Play C 4 on the piano"]');
+    await wait(1000);
+    await click('.piano [aria-label="Play E 4 on the piano"]');
+    await wait(1300);
+    assert(await devtools.evaluate('idleContexts[1].state === "running"'), "Piano suspended before its last overlapping note ended");
+    await devtools.waitFor('idleContexts.every(c => c.state === "suspended")');
+    await devtools.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: probe.identifier });
+    await devtools.evaluate('localStorage.removeItem("tagmix:mix:37")');
+    checks.push(`${backend}: idle audio clocks stop; pause/resume, paused seeking/pitch changes, natural end/replay, failed playback recovery, reference-note resume, and overlapping piano notes work`);
+  }
   for (const width of [360, 1440]) {
     await devtools.send("Emulation.setDeviceMetricsOverride", { width, height: 800, deviceScaleFactor: 1, mobile: width === 360 });
     await navigate("/");

@@ -16,7 +16,7 @@ import {
 } from "@/lib/notes";
 
 type Instrument = "piano" | "pitch-pipe";
-type Tone = { envelope: GainNode; instrument: Instrument; oscillators: OscillatorNode[] };
+type Tone = { envelope: GainNode; instrument: Instrument; oscillators: OscillatorNode[]; stopping?: boolean };
 type ToneEngine = {
   context: AudioContext;
   master: GainNode;
@@ -33,6 +33,8 @@ type AudioContextWindow = Window & {
 };
 
 function stopTone(tone: Tone, at: number) {
+  if (tone.stopping) return;
+  tone.stopping = true;
   tone.envelope.gain.cancelScheduledValues(at);
   tone.envelope.gain.setValueAtTime(Math.max(0.0001, tone.envelope.gain.value), at);
   tone.envelope.gain.exponentialRampToValueAtTime(0.0001, at + 0.04);
@@ -92,7 +94,12 @@ function createTone(engine: ToneEngine, midi: number, instrument: Instrument): T
     tone.oscillators.push(oscillator);
   }
 
-  tone.oscillators[0].addEventListener("ended", () => engine.tones.delete(tone), { once: true });
+  tone.oscillators[0].addEventListener("ended", () => {
+    engine.tones.delete(tone);
+    if (engine.tones.size === 0 && context.state !== "closed") {
+      void context.suspend().catch(() => {});
+    }
+  }, { once: true });
   engine.tones.add(tone);
   return tone;
 }
@@ -140,13 +147,14 @@ function useTonePlayer() {
 
     try {
       const engine = getEngine();
-      if (engine.context.state === "suspended") void engine.context.resume();
-      const pianoTones = [...engine.tones].filter((tone) => tone.instrument === "piano");
+      // Queue resume even if a preceding note's suspend is still pending.
+      void engine.context.resume().catch(() => {});
+      const activeTones = [...engine.tones].filter((tone) => !tone.stopping);
+      const pianoTones = activeTones.filter((tone) => tone.instrument === "piano");
       const tonesToStop = instrument === "pitch-pipe"
-        ? [...engine.tones].filter((tone) => tone.instrument === "pitch-pipe")
+        ? activeTones.filter((tone) => tone.instrument === "pitch-pipe")
         : pianoTones.slice(0, Math.max(0, pianoTones.length - MAX_PIANO_TONES + 1));
       for (const tone of tonesToStop) {
-        engine.tones.delete(tone);
         stopTone(tone, engine.context.currentTime);
       }
       createTone(engine, midi, instrument);

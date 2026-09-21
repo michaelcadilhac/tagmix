@@ -138,6 +138,15 @@ export function Mixer({ tag, pitchSemitones, onPitchChange, initialPitch }: {
   const allReady = VOICES.every((voice) => statuses[voice] === "ready");
   const hasError = VOICES.some((voice) => statuses[voice] === "error");
 
+  const pausePlayback = useCallback(() => {
+    for (const voice of VOICES) audiosRef.current[voice]?.pause();
+    setIsPlaying(false);
+    // Paused media still leaves the pitch worklets processing silence unless
+    // the context itself sleeps. Play resumes this same graph and position.
+    const context = graphRef.current?.context;
+    if (context && context.state !== "closed") void context.suspend().catch(() => {});
+  }, []);
+
   const applyGraphMix = useCallback(() => {
     const graph = graphRef.current;
     if (!graph) return;
@@ -225,8 +234,8 @@ export function Mixer({ tag, pitchSemitones, onPitchChange, initialPitch }: {
       };
       const failed = () => setStatuses((current) => ({ ...current, [voice]: "error" }));
       const ended = () => {
-        for (const item of VOICES) audios[item]?.pause();
-        setIsPlaying(false);
+        pausePlayback();
+        setCurrentTime(audio.currentTime);
       };
       audio.addEventListener("loadedmetadata", ready);
       audio.addEventListener("durationchange", refreshDuration);
@@ -258,7 +267,7 @@ export function Mixer({ tag, pitchSemitones, onPitchChange, initialPitch }: {
     };
     // Speed is applied by the dedicated effect without recreating media elements.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tag.id]);
+  }, [pausePlayback, tag.id]);
 
   useEffect(() => {
     for (const voice of VOICES) {
@@ -398,8 +407,7 @@ export function Mixer({ tag, pitchSemitones, onPitchChange, initialPitch }: {
   async function togglePlayback() {
     setPlaybackError("");
     if (isPlaying) {
-      for (const voice of VOICES) audiosRef.current[voice]?.pause();
-      setIsPlaying(false);
+      pausePlayback();
       return;
     }
 
@@ -419,8 +427,7 @@ export function Mixer({ tag, pitchSemitones, onPitchChange, initialPitch }: {
       if (rejection?.status === "rejected") throw rejection.reason;
       setIsPlaying(true);
     } catch (error) {
-      for (const voice of VOICES) audiosRef.current[voice]?.pause();
-      setIsPlaying(false);
+      pausePlayback();
       setPlaybackError(error instanceof Error ? error.message : "Playback could not start.");
     } finally {
       setIsStarting(false);
