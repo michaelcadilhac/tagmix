@@ -136,13 +136,13 @@ export function FolderEditor({ folderId }: { folderId: string }) {
   </AccountRequired></>;
 }
 
-export function SharedFolderView({ token }: { token: string }) {
+export function SharedFolderView({ token, initialFolder, initialError = "" }: { token: string; initialFolder?: SharedFolder; initialError?: string }) {
   const { user, loading } = useAccount();
   const router = useRouter();
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
   const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<{ folder?: SharedFolder; error?: string }>({});
+  const [state, setState] = useState<{ folder?: SharedFolder; error?: string }>({ folder: initialFolder, error: initialError });
   useEffect(() => {
     const controller = new AbortController();
     fetch(`/api/shared/${encodeURIComponent(token)}`, { cache: "no-store", signal: controller.signal })

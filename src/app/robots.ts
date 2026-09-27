@@ -5,7 +5,9 @@ export default function robots(): MetadataRoute.Robots {
     rules: {
       userAgent: "*",
       allow: "/",
-      disallow: ["/account", "/folders", "/history", "/shared/", "/api/account/", "/api/shared/"],
+      // Shared pages are readable by link; their noindex metadata keeps them
+      // out of search results without blocking tools from reading the list.
+      disallow: ["/account", "/folders", "/history", "/api/account/", "/api/shared/"],
     },
   };
 }

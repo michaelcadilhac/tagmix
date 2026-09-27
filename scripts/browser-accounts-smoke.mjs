@@ -298,7 +298,11 @@ try {
     assert(tagResponse.ok && tagHtml.includes('<h1>First rehearsal tag</h1>') && tagHtml.includes('C Major') && tagHtml.includes('View original tag page'), `Initial tag HTML is incomplete for ${userAgent}`);
   }
   const robots = await (await fetch(`${baseUrl}/robots.txt`)).text();
-  assert(robots.includes('Allow: /') && robots.includes('Disallow: /shared/') && robots.includes('Disallow: /api/account/'), "Public crawler policy is missing or exposes private routes");
+  assert(robots.includes('Allow: /') && !robots.includes('Disallow: /shared/') && robots.includes('Disallow: /api/account/') && robots.includes('Disallow: /api/shared/'), "Crawler policy blocks shared pages or exposes account APIs");
+  const emptySharedHtml = (await (await fetch(`${baseUrl}/shared/${legacyMainToken}`)).text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
+  assert(emptySharedHtml.includes('<h1>Legacy shared folder</h1>') && emptySharedHtml.includes('No tags in this folder yet.'), "Empty shared folder is missing from initial HTML");
+  const missingSharedHtml = (await (await fetch(`${baseUrl}/shared/${"0".repeat(48)}`)).text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
+  assert(missingSharedHtml.includes('Folder unavailable') && missingSharedHtml.includes('Shared folder not found.'), "Missing shared folder needs JavaScript to show its error");
   assert((await fetch(`${baseUrl}/tags/99999999`)).status === 404, "Unknown tag should return an HTTP 404");
   await devtools.send("Emulation.setScriptExecutionDisabled", { value: true });
   await navigate("/?q=Old+Kentucky+Home");
@@ -786,6 +790,29 @@ try {
   await devtools.waitFor('!!document.querySelector(".account-email")');
   await click('.account-card > button');
   await devtools.waitFor('!!document.querySelector(".account-form")');
+  for (const userAgent of ["Wget/1.21.4", "Mozilla/5.0", "ChatGPT-User/1.0", "OAI-SearchBot/1.4"]) {
+    const response = await fetch(shareUrl, { headers: { "User-Agent": userAgent } });
+    const rawHtml = await response.text();
+    const html = rawHtml.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
+    const list = html.match(/<ol class="saved-tag-list">([\s\S]*?)<\/ol>/)?.[1] ?? "";
+    assert(response.ok && html.includes('<h1>Our next rehearsal</h1>') && html.includes(owner.email), `Shared folder heading is missing for ${userAgent}`);
+    assert(list.includes('href="/tags/1482?pitch=0"') && list.includes('href="/tags/37?pitch=3"') && list.indexOf('Second rehearsal tag') < list.indexOf('First rehearsal tag'), `Shared tag links or order are missing for ${userAgent}`);
+    assert(list.includes('C Major') && list.includes('+3 semitones') && !html.includes('Loading shared folder'), `Shared tag details need JavaScript for ${userAgent}`);
+    assert(/<meta name="robots" content="noindex, nofollow"/.test(html), "Shared page lost its noindex policy");
+    assert(!rawHtml.includes('password_hash') && !rawHtml.includes('Old browser cue') && !rawHtml.includes('"marks":') && !rawHtml.includes('"history":'), "Shared HTML exposes private account data");
+  }
+  await devtools.send("Emulation.setScriptExecutionDisabled", { value: true });
+  for (const width of [360, 1440]) {
+    await devtools.send("Emulation.setDeviceMetricsOverride", { width, height: 800, deviceScaleFactor: 1, mobile: width === 360 });
+    await navigate(new URL(shareUrl).pathname);
+    await devtools.waitFor('document.querySelectorAll(".saved-tag-list li").length === 2');
+    assert(await devtools.evaluate('document.querySelector(".saved-tag-list").getBoundingClientRect().height > 0'), "Shared tags are hidden without JavaScript");
+    await layout(`Shared folder without JavaScript at ${width}px`);
+  }
+  await click('.saved-tag-link');
+  await devtools.waitFor('location.pathname === "/tags/1482" && document.querySelector("h1")?.textContent === "Second rehearsal tag"');
+  await devtools.send("Emulation.setScriptExecutionDisabled", { value: false });
+  checks.push("Shared pages expose ordered tag links, keys, and pitches to wget and OpenAI user agents; lists and links work without JavaScript at mobile and desktop widths");
   await navigate(new URL(shareUrl).pathname);
   await devtools.waitFor('document.querySelector("h1")?.textContent === "Our next rehearsal"');
   assert(await devtools.evaluate('document.querySelector(".saved-tag-list strong").textContent === "Second rehearsal tag" && !document.querySelector(".folder-tag-actions")'), "Anonymous shared view incorrect");
@@ -896,6 +923,8 @@ try {
   await click('.folder-pitch button[aria-label="Raise pitch for First rehearsal tag"]');
   await devtools.waitFor('document.querySelector(".saved-tag-list li:last-child .pitch-stepper output")?.textContent === "+4"');
   assert((await api(`shared/${sharedToken}`)).data.folder.tags[1].pitchSemitones === 4, "Editor did not update original folder");
+  const updatedSharedHtml = (await (await fetch(shareUrl)).text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
+  assert(updatedSharedHtml.includes('href="/tags/37?pitch=4"') && updatedSharedHtml.includes('Can edit'), "Shared HTML serves stale pitch or permissions after an edit");
   assert((await api(`account/folders/${importedId}`, "GET", undefined, other.id)).data.folder.tags[0].pitchSemitones === 3, "Editor changed an independent copy");
   assert((await api(`account/folders/${folderId}`, "PATCH", { name: "Renamed by editor" }, other.id)).status === 403, "Editor can rename the folder through the API");
   await layout("Linked editable folder");
