@@ -160,9 +160,6 @@ export function ScoreViewer({ originalUrl, sheetType, tagId, title, pitchSemiton
           </div>
         )}
       </div>
-      <footer className="score-footer">
-        <a href={originalUrl} rel="noreferrer" target="_blank">Original file <Icon name="external" size={14} /></a>
-      </footer>
       <NoteTools collapsible pitchSemitones={pitchSemitones} />
       <dialog className="score-fullscreen" ref={dialog} aria-labelledby="fullscreen-score-heading" onClose={closeFullscreen}>
         <div className="score-fullscreen-content" ref={fullscreenSurface}>
