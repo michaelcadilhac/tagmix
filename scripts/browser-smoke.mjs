@@ -204,24 +204,25 @@ try {
   await devtools.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 120, y: 200, id: 1 }, { x: 240, y: 200, id: 2 }] });
   await devtools.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 60, y: 200, id: 1 }, { x: 300, y: 200, id: 2 }] });
   await devtools.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-  await devtools.waitFor(`parseInt(document.querySelector(".score-zoom-reset").textContent) > 100`);
+  await devtools.waitFor(`parseInt(document.querySelector(".score-fullscreen .score-image-wrap").style.width) > 100`);
   await devtools.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 60, y: 200, id: 1 }, { x: 300, y: 200, id: 2 }] });
   await devtools.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 120, y: 200, id: 1 }, { x: 240, y: 200, id: 2 }] });
   await devtools.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-  await devtools.waitFor(`parseInt(document.querySelector(".score-zoom-reset").textContent) <= 110`);
-  await devtools.evaluate(`(() => {
-    const button = document.querySelector('[aria-label="Zoom in fullscreen score"]');
-    for (let i = 0; i < 12; i++) button.click();
-  })()`);
-  await devtools.waitFor(`document.querySelector(".score-zoom-reset").textContent === "400%"`);
+  await devtools.waitFor(`parseInt(document.querySelector(".score-fullscreen .score-image-wrap").style.width) <= 110`);
+  for (let i = 0; i < 2; i++) {
+    await devtools.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 120, y: 200, id: 1 }, { x: 240, y: 200, id: 2 }] });
+    await devtools.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 60, y: 200, id: 1 }, { x: 300, y: 200, id: 2 }] });
+    await devtools.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await devtools.waitFor(`parseInt(document.querySelector(".score-fullscreen .score-image-wrap").style.width) >= ${200 * (i + 1)}`);
+  }
   const fullscreenScore = await devtools.evaluate(`(() => {
     const scroll = document.querySelector(".score-fullscreen-scroll");
     scroll.scrollTop = scroll.scrollHeight;
     scroll.scrollLeft = scroll.scrollWidth;
     const exit = document.querySelector(".score-fullscreen-exit").getBoundingClientRect();
-    return { exitVisible: exit.top >= 0 && exit.right <= innerWidth && exit.bottom <= innerHeight, pageScale: visualViewport.scale, zoom: document.querySelector(".score-zoom-reset").textContent };
+    return { exitVisible: exit.top >= 0 && exit.right <= innerWidth && exit.bottom <= innerHeight, pageScale: visualViewport.scale, zoom: document.querySelector(".score-fullscreen .score-image-wrap").style.width, toolbarAbsent: !document.querySelector(".score-fullscreen header"), fullHeight: scroll.getBoundingClientRect().height === innerHeight, exitReachable: document.querySelector(".score-fullscreen-exit").contains(document.elementFromPoint(exit.left + exit.width / 2, exit.top + exit.height / 2)) };
   })()`);
-  if (!fullscreenScore.exitVisible || fullscreenScore.pageScale !== 1) throw new Error(`Fullscreen controls failed: ${JSON.stringify(fullscreenScore)}`);
+  if (!fullscreenScore.exitVisible || !fullscreenScore.exitReachable || !fullscreenScore.toolbarAbsent || !fullscreenScore.fullHeight || fullscreenScore.pageScale !== 1) throw new Error(`Fullscreen controls failed: ${JSON.stringify(fullscreenScore)}`);
   if (process.env.TAGMIX_SCREENSHOT_DIR) {
     const screenshot = await devtools.send("Page.captureScreenshot", { format: "png" });
     await writeFile(`${process.env.TAGMIX_SCREENSHOT_DIR}/fullscreen-score.png`, screenshot.data, "base64");

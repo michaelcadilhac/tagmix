@@ -161,17 +161,9 @@ export function ScoreViewer({ originalUrl, sheetType, tagId, title, pitchSemiton
         )}
       </div>
       <NoteTools collapsible pitchSemitones={pitchSemitones} />
-      <dialog className="score-fullscreen" ref={dialog} aria-labelledby="fullscreen-score-heading" onClose={closeFullscreen}>
+      <dialog className="score-fullscreen" ref={dialog} aria-label={`Sheet music for ${title}`} onClose={closeFullscreen}>
         <div className="score-fullscreen-content" ref={fullscreenSurface}>
-          <header className="score-fullscreen-toolbar">
-            <h2 id="fullscreen-score-heading">Sheet music</h2>
-            <div className="score-tools" aria-label="Fullscreen score zoom controls">
-              <button aria-label="Zoom out fullscreen score" disabled={fullscreenZoom <= 50} onClick={() => setFullscreenZoom((value) => Math.max(50, value - 25))} type="button"><Icon name="zoom-out" size={18} /></button>
-              <button className="score-zoom-reset" aria-label="Reset fullscreen score zoom" onClick={() => setFullscreenZoom(100)} type="button">{fullscreenZoom}%</button>
-              <button aria-label="Zoom in fullscreen score" disabled={fullscreenZoom >= 400} onClick={() => setFullscreenZoom((value) => Math.min(400, value + 25))} type="button"><Icon name="zoom-in" size={18} /></button>
-            </div>
-            <button className="score-fullscreen-exit button button-secondary" onClick={() => dialog.current?.close()} type="button" autoFocus><Icon name="x" size={18} /> Exit</button>
-          </header>
+          <button className="score-fullscreen-exit button button-secondary" onClick={() => dialog.current?.close()} type="button" autoFocus><Icon name="x" size={18} /> Exit</button>
           <div className="score-fullscreen-scroll" ref={fullscreenScroll} tabIndex={0} aria-label="Sheet music; pinch to zoom and swipe to pan">
             {fullscreen && <div className="score-image-wrap" style={{ width: `${fullscreenZoom}%` }}>
               <Image alt={`Sheet music for ${title}`} height={1800} width={1400} src={`/api/tags/${tagId}/sheet`} unoptimized draggable={false} />

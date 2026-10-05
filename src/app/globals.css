@@ -2495,10 +2495,7 @@ button.text-link { padding: 8px 0; border: 0; background: transparent; }
 .score-fullscreen { position: fixed; inset: 0; width: 100%; max-width: none; height: 100%; height: 100dvh; max-height: none; margin: 0; padding: 0; border: 0; background: #e9e5dd; color: var(--ink); overflow: hidden; }
 .score-fullscreen[open] { display: flex; flex-direction: column; }
 .score-fullscreen::backdrop { background: #e9e5dd; }
-.score-fullscreen-toolbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 8px; padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left)); background: var(--surface); border-bottom: 1px solid var(--line); }
-.score-fullscreen-toolbar h2 { margin: 0; font-size: 1.15rem; }
-.score-fullscreen-toolbar .score-zoom-reset { width: 52px; border-radius: 16px; font-size: 0.75rem; font-weight: 750; }
-.score-fullscreen-exit { min-width: 70px; min-height: 44px; padding: 8px 12px; }
+.score-fullscreen-exit { position: absolute; z-index: 2; top: max(8px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); min-width: 70px; min-height: 44px; padding: 8px 12px; background: var(--surface); box-shadow: var(--shadow-sm); }
 .score-fullscreen-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y; padding: 12px max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
 .score-fullscreen-scroll .score-image-wrap { min-width: 0; transition: none; }
 
@@ -2506,7 +2503,6 @@ button.text-link { padding: 8px 0; border: 0; background: transparent; }
   .score-panel > .panel-header h2 { font-size: 1.25rem; }
   .score-panel > .panel-header { padding-inline: 12px; }
   .score-tools span { min-width: 36px; }
-  .score-fullscreen-toolbar h2 { font-size: 1rem; }
 }
 
 /* Phone landscape keeps navigation available without reserving a banner row. */
@@ -2526,4 +2522,4 @@ button.text-link { padding: 8px 0; border: 0; background: transparent; }
   .score-panel { position: static; }
 }
 
-.score-fullscreen-content { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; background: #e9e5dd; }
+.score-fullscreen-content { position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; background: #e9e5dd; }
