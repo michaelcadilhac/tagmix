@@ -196,6 +196,69 @@ try {
     throw new Error(`Mobile rehearsal layout failed: ${JSON.stringify(detail)}`);
   }
 
+  await devtools.waitFor(`!document.querySelector(".score-fullscreen-button")?.disabled`);
+  // Exercise the viewport modal fallback used by iPhone Safari, including real touch gestures.
+  await devtools.evaluate(`document.querySelector(".score-fullscreen-content").requestFullscreen = undefined`);
+  await devtools.evaluate(`document.querySelector(".score-fullscreen-button").click()`, true);
+  await devtools.waitFor(`document.querySelector(".score-fullscreen")?.open && document.querySelector(".score-fullscreen img")?.complete`);
+  await devtools.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 120, y: 200, id: 1 }, { x: 240, y: 200, id: 2 }] });
+  await devtools.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 60, y: 200, id: 1 }, { x: 300, y: 200, id: 2 }] });
+  await devtools.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await devtools.waitFor(`parseInt(document.querySelector(".score-zoom-reset").textContent) > 100`);
+  await devtools.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 60, y: 200, id: 1 }, { x: 300, y: 200, id: 2 }] });
+  await devtools.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 120, y: 200, id: 1 }, { x: 240, y: 200, id: 2 }] });
+  await devtools.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await devtools.waitFor(`parseInt(document.querySelector(".score-zoom-reset").textContent) <= 110`);
+  await devtools.evaluate(`(() => {
+    const button = document.querySelector('[aria-label="Zoom in fullscreen score"]');
+    for (let i = 0; i < 12; i++) button.click();
+  })()`);
+  await devtools.waitFor(`document.querySelector(".score-zoom-reset").textContent === "400%"`);
+  const fullscreenScore = await devtools.evaluate(`(() => {
+    const scroll = document.querySelector(".score-fullscreen-scroll");
+    scroll.scrollTop = scroll.scrollHeight;
+    scroll.scrollLeft = scroll.scrollWidth;
+    const exit = document.querySelector(".score-fullscreen-exit").getBoundingClientRect();
+    return { exitVisible: exit.top >= 0 && exit.right <= innerWidth && exit.bottom <= innerHeight, pageScale: visualViewport.scale, zoom: document.querySelector(".score-zoom-reset").textContent };
+  })()`);
+  if (!fullscreenScore.exitVisible || fullscreenScore.pageScale !== 1) throw new Error(`Fullscreen controls failed: ${JSON.stringify(fullscreenScore)}`);
+  if (process.env.TAGMIX_SCREENSHOT_DIR) {
+    const screenshot = await devtools.send("Page.captureScreenshot", { format: "png" });
+    await writeFile(`${process.env.TAGMIX_SCREENSHOT_DIR}/fullscreen-score.png`, screenshot.data, "base64");
+  }
+  await devtools.evaluate(`document.querySelector(".score-fullscreen-exit").click()`, true);
+  await devtools.waitFor(`!document.querySelector(".score-fullscreen").open && document.body.style.overflow !== "hidden"`);
+  if (!await devtools.evaluate(`document.activeElement === document.querySelector(".score-fullscreen-button")`)) throw new Error("Fullscreen did not restore focus");
+  await devtools.evaluate(`document.querySelector(".score-fullscreen-button").click()`, true);
+  await devtools.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+  await devtools.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+  await devtools.waitFor(`!document.querySelector(".score-fullscreen").open`);
+
+  await devtools.evaluate(`delete document.querySelector(".score-fullscreen-content").requestFullscreen`);
+  await devtools.evaluate(`document.querySelector(".score-fullscreen-button").click()`, true);
+  await devtools.waitFor(`document.fullscreenElement === document.querySelector(".score-fullscreen-content")`);
+  await devtools.evaluate(`document.querySelector(".score-fullscreen-exit").click()`, true);
+  await devtools.waitFor(`!document.fullscreenElement && !document.querySelector(".score-fullscreen").open`);
+
+  await devtools.send("Emulation.setDeviceMetricsOverride", { width: 800, height: 360, deviceScaleFactor: 1, mobile: true });
+  const landscape = await devtools.evaluate(`({ headerHeight: document.querySelector(".site-header").getBoundingClientRect().height, menuVisible: getComputedStyle(document.querySelector(".menu-toggle")).display !== "none", width: document.documentElement.scrollWidth, viewport: innerWidth })`);
+  if (landscape.headerHeight !== 0 || !landscape.menuVisible || landscape.width > landscape.viewport) throw new Error(`Landscape navigation failed: ${JSON.stringify(landscape)}`);
+  await devtools.evaluate(`document.querySelector(".menu-toggle").click()`, true);
+  await devtools.waitFor(`getComputedStyle(document.querySelector(".header-nav")).display === "grid"`);
+  await devtools.evaluate(`document.querySelector(".menu-toggle").click()`, true);
+  await devtools.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+  const compactScore = await devtools.evaluate(`(() => {
+    const scroll = document.querySelector(".score-scroll");
+    const image = scroll.querySelector("img");
+    return { height: scroll.clientHeight, imageHeight: image.getBoundingClientRect().height, minHeight: getComputedStyle(scroll).minHeight, width: document.documentElement.scrollWidth, viewport: innerWidth };
+  })()`);
+  if (compactScore.minHeight !== "0px" || compactScore.height > compactScore.imageHeight + 50 || compactScore.width > compactScore.viewport) throw new Error(`Compact score failed: ${JSON.stringify(compactScore)}`);
+  if (process.env.TAGMIX_SCREENSHOT_DIR) {
+    const screenshot = await devtools.send("Page.captureScreenshot", { format: "png" });
+    await writeFile(`${process.env.TAGMIX_SCREENSHOT_DIR}/desktop-score.png`, screenshot.data, "base64");
+  }
+  await devtools.send("Emulation.setDeviceMetricsOverride", { width: 360, height: 800, deviceScaleFactor: 1, mobile: true });
+
   await devtools.evaluate(`document.querySelector(".note-tools-launcher-buttons button:last-child").click()`, true);
   await devtools.waitFor(`document.querySelectorAll(".note-tools-embedded .pitch-pipe-notes button").length === 12`);
   await devtools.evaluate(`document.querySelector('.note-tools-embedded [aria-label="Play C 4 on the pitch pipe"]').click()`, true);
@@ -372,7 +435,7 @@ try {
     await writeFile(`${process.env.TAGMIX_SCREENSHOT_DIR}/standalone-tools.png`, screenshot.data, "base64");
   }
 
-  console.log(JSON.stringify({ home, detail, embeddedTools, clientPitch, clientBackend, browserOnlyPitch, standaloneTools, transportTime, markSaved: true }, null, 2));
+  console.log(JSON.stringify({ home, detail, fullscreenScore, landscape, compactScore, embeddedTools, clientPitch, clientBackend, browserOnlyPitch, standaloneTools, transportTime, markSaved: true }, null, 2));
 } finally {
   devtools?.close();
   if (browser.exitCode === null) {

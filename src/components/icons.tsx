@@ -8,6 +8,8 @@ export type IconName =
   | "chevron-right"
   | "external"
   | "eye"
+  | "fullscreen"
+  | "menu"
   | "headphones"
   | "marker"
   | "minus"
@@ -34,6 +36,8 @@ const paths: Record<IconName, React.ReactNode> = {
   "chevron-right": <path d="m9 18 6-6-6-6" />,
   external: <><path d="M14 5h5v5" /><path d="M10 14 19 5" /><path d="M19 13v6H5V5h6" /></>,
   eye: <><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></>,
+  fullscreen: <path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5" />,
+  menu: <path d="M4 6h16M4 12h16M4 18h16" />,
   headphones: <><path d="M4 14v-2a8 8 0 0 1 16 0v2" /><path d="M18 19h-1a2 2 0 0 1-2-2v-3h5v3a2 2 0 0 1-2 2ZM6 19H5a2 2 0 0 1-2-2v-3h5v3a2 2 0 0 1-2 2Z" /></>,
   marker: <><path d="M12 21s6-5.2 6-11a6 6 0 1 0-12 0c0 5.8 6 11 6 11Z" /><circle cx="12" cy="10" r="2" /></>,
   minus: <path d="M5 12h14" />,

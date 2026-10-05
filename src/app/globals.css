@@ -747,7 +747,7 @@ main {
 
 .score-stage {
   position: relative;
-  min-height: 540px;
+  min-height: 0;
   background:
     linear-gradient(rgba(23, 59, 60, 0.025) 1px, transparent 1px),
     linear-gradient(90deg, rgba(23, 59, 60, 0.025) 1px, transparent 1px),
@@ -755,9 +755,14 @@ main {
   background-size: 24px 24px;
 }
 
+.score-stage.is-loading,
+.score-stage.has-error {
+  min-height: 260px;
+}
+
 .score-scroll {
   max-height: calc(100svh - 250px);
-  min-height: 540px;
+  min-height: 0;
   padding: 24px;
   overflow: auto;
   opacity: 1;
@@ -2480,3 +2485,44 @@ button.text-link { padding: 8px 0; border: 0; background: transparent; }
 .sharing-error { max-width: 230px; }
 .folder-heading .folder-owner { margin-top: 5px; overflow-wrap: anywhere; }
 @media (max-width: 640px) { .sharing-dropdown { left: 0; right: auto; } }
+
+/* Score sizing and a viewport-sized, independently zoomable score. */
+.score-panel > .panel-header { min-height: 72px; gap: 8px; padding: 14px 18px; }
+.score-actions { display: flex; align-items: center; gap: 6px; }
+.score-tools { height: 44px; }
+.score-tools button { width: 38px; height: 38px; }
+.score-fullscreen-button { display: grid; width: 44px; height: 44px; padding: 0; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: var(--paper); }
+.score-fullscreen { position: fixed; inset: 0; width: 100%; max-width: none; height: 100%; height: 100dvh; max-height: none; margin: 0; padding: 0; border: 0; background: #e9e5dd; color: var(--ink); overflow: hidden; }
+.score-fullscreen[open] { display: flex; flex-direction: column; }
+.score-fullscreen::backdrop { background: #e9e5dd; }
+.score-fullscreen-toolbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 8px; padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left)); background: var(--surface); border-bottom: 1px solid var(--line); }
+.score-fullscreen-toolbar h2 { margin: 0; font-size: 1.15rem; }
+.score-fullscreen-toolbar .score-zoom-reset { width: 52px; border-radius: 16px; font-size: 0.75rem; font-weight: 750; }
+.score-fullscreen-exit { min-width: 70px; min-height: 44px; padding: 8px 12px; }
+.score-fullscreen-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y; padding: 12px max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+.score-fullscreen-scroll .score-image-wrap { min-width: 0; transition: none; }
+
+@media (max-width: 640px) {
+  .score-panel > .panel-header h2 { font-size: 1.25rem; }
+  .score-panel > .panel-header { padding-inline: 12px; }
+  .score-tools span { min-width: 36px; }
+  .score-fullscreen-toolbar h2 { font-size: 1rem; }
+}
+
+/* Phone landscape keeps navigation available without reserving a banner row. */
+@media (orientation: landscape) and (max-height: 500px) and (max-width: 1024px) {
+  .site-header { height: 0; border: 0; background: transparent; backdrop-filter: none; }
+  .header-inner { width: 100%; min-height: 0; }
+  .site-header .brand { display: none; }
+  .primary-navigation { position: fixed; top: max(8px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); }
+  .menu-toggle { display: inline-flex; width: 44px; height: 44px; min-height: 44px; padding: 0; justify-content: center; background: var(--surface); box-shadow: var(--shadow-sm); }
+  .menu-toggle-label { display: none; }
+  .header-nav { display: none; position: absolute; top: calc(100% + 8px); right: 0; width: 260px; max-height: calc(100dvh - 72px); overflow-y: auto; padding: 8px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow-sm); font-size: 0.95rem; }
+  .header-nav.is-open { display: grid; gap: 2px; }
+  .header-nav a { display: flex; padding: 8px 14px; border-radius: 8px; }
+  .workspace-page { padding-top: 16px; }
+  .workspace-heading { padding-right: 52px; }
+  .score-panel { position: static; }
+}
+
+.score-fullscreen-content { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; background: #e9e5dd; }

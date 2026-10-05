@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { Icon } from "@/components/icons";
 import { accountRequest, errorMessage } from "@/lib/account-client";
 import type { AccountUser } from "@/lib/account-types";
 import { importLegacyMarks } from "@/lib/legacy-marks";
@@ -131,7 +132,7 @@ export function AccountNavigation() {
   }, [open]);
   const links = [["/", "Browse tags"], ["/tools", "Pitch tools"], ["/folders", "My folders"], ["/history", "Recently viewed"], ["/account", user ? "Account" : "Sign in"]];
   return <div className="primary-navigation" ref={container}>
-    <button className="menu-toggle button button-secondary" aria-expanded={open} aria-controls="primary-menu" onClick={() => setOpen(!open)} type="button">{open ? "Close menu" : "Menu"}</button>
+    <button className="menu-toggle button button-secondary" aria-label={open ? "Close menu" : "Open menu"} aria-expanded={open} aria-controls="primary-menu" onClick={() => setOpen(!open)} type="button"><Icon name={open ? "x" : "menu"} size={20} /><span className="menu-toggle-label">{open ? "Close menu" : "Menu"}</span></button>
     <nav className={`header-nav ${open ? "is-open" : ""}`} id="primary-menu" aria-label="Primary navigation">
       {links.map(([href, label]) => <Link key={href} href={href} aria-current={(href === "/" ? pathname === href : pathname.startsWith(href)) ? "page" : undefined} onClick={() => setOpen(false)}>{label}</Link>)}
     </nav>
