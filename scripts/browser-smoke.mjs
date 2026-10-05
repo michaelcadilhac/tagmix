@@ -246,6 +246,30 @@ try {
   await devtools.evaluate(`document.querySelector(".menu-toggle").click()`, true);
   await devtools.waitFor(`getComputedStyle(document.querySelector(".header-nav")).display === "grid"`);
   await devtools.evaluate(`document.querySelector(".menu-toggle").click()`, true);
+  for (const [width, height] of [[667, 375], [800, 360], [932, 430]]) {
+    await devtools.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: true });
+    // Align the score toolbar with the floating menu to reproduce the reported collision.
+    await devtools.evaluate(`(() => {
+      const menu = document.querySelector(".menu-toggle").getBoundingClientRect();
+      const score = document.querySelector(".score-fullscreen-button").getBoundingClientRect();
+      window.scrollBy({ top: score.top - menu.top, behavior: "instant" });
+    })()`);
+    const access = await devtools.evaluate(`(() => {
+      const button = document.querySelector(".score-fullscreen-button");
+      const score = button.getBoundingClientRect();
+      const menu = document.querySelector(".menu-toggle").getBoundingClientRect();
+      const hit = document.elementFromPoint(score.left + score.width / 2, score.top + score.height / 2);
+      return { gap: menu.left - score.right, reachable: button.contains(hit), width: document.documentElement.scrollWidth, viewport: innerWidth };
+    })()`);
+    if (access.gap < 8 || !access.reachable || access.width > access.viewport) throw new Error(`Landscape score access failed at ${width}x${height}: ${JSON.stringify(access)}`);
+    const { x, y } = await devtools.evaluate(`(() => { const bounds = document.querySelector(".score-fullscreen-button").getBoundingClientRect(); return { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 }; })()`);
+    await devtools.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y, id: 1 }] });
+    await devtools.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await devtools.waitFor(`document.querySelector(".score-fullscreen").open`);
+    await devtools.evaluate(`document.querySelector(".score-fullscreen-exit").click()`, true);
+    await devtools.waitFor(`!document.fullscreenElement && !document.querySelector(".score-fullscreen").open`);
+  }
+  await devtools.evaluate(`window.scrollTo({ top: 0, behavior: "instant" })`);
   await devtools.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
   const compactScore = await devtools.evaluate(`(() => {
     const scroll = document.querySelector(".score-scroll");
