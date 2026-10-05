@@ -259,9 +259,9 @@ try {
       const score = button.getBoundingClientRect();
       const menu = document.querySelector(".menu-toggle").getBoundingClientRect();
       const hit = document.elementFromPoint(score.left + score.width / 2, score.top + score.height / 2);
-      return { gap: menu.left - score.right, reachable: button.contains(hit), width: document.documentElement.scrollWidth, viewport: innerWidth };
+      return { gap: menu.left - score.right, reachable: button.contains(hit), mainPaddingRight: getComputedStyle(document.querySelector("main")).paddingRight, columns: getComputedStyle(document.querySelector(".workspace-grid")).gridTemplateColumns.split(" ").length, width: document.documentElement.scrollWidth, viewport: innerWidth };
     })()`);
-    if (access.gap < 8 || !access.reachable || access.width > access.viewport) throw new Error(`Landscape score access failed at ${width}x${height}: ${JSON.stringify(access)}`);
+    if (access.gap < 8 || !access.reachable || access.mainPaddingRight !== "0px" || access.columns !== (width > 880 ? 2 : 1) || access.width > access.viewport) throw new Error(`Landscape score access failed at ${width}x${height}: ${JSON.stringify(access)}`);
     const { x, y } = await devtools.evaluate(`(() => { const bounds = document.querySelector(".score-fullscreen-button").getBoundingClientRect(); return { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 }; })()`);
     await devtools.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y, id: 1 }] });
     await devtools.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
